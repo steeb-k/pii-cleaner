@@ -1,0 +1,41 @@
+{
+  "id": 50042,
+  "ip": "10.20.30.50",
+  "mac": "AA:BB:CC:DD:EE:01",
+  "hostName": "WKS-FIN-050",
+  "hostNames": [
+    { "name": "WKS-FIN-050", "source": "dns" },
+    { "name": "wks-fin-050.example.corp", "source": "dns" }
+  ],
+  "osFingerprint": {
+    "description": "Microsoft Windows 10 Enterprise",
+    "family": "Windows",
+    "product": "Windows 10",
+    "systemName": "Windows",
+    "version": "10.0.19045"
+  },
+  "addresses": [
+    { "ip": "10.20.30.50", "mac": "AA:BB:CC:DD:EE:01" },
+    { "ip": "192.168.1.50", "mac": "AA:BB:CC:DD:EE:01" }
+  ],
+  "ids": [
+    { "id": "4e2d9b7a-1c3f-4a5e-8b6d-7f9a1e3c5b7f", "source": "AGENT" },
+    { "id": "b3f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6", "source": "SCAN" }
+  ],
+  "serialNumber": "SN-7X9K2L4M6P8Q",
+  "history": [
+    { "date": "2026-09-29T08:00:00.000Z", "type": "SCAN", "scanId": 991234 }
+  ],
+  "owner": {
+    "username": "asmith",
+    "email": "asmith@example.corp",
+    "domain": "example.corp"
+  },
+  "vulnerabilities": {
+    "critical": 1,
+    "severe": 4,
+    "moderate": 9,
+    "total": 14
+  },
+  "riskScore": 742.3
+}

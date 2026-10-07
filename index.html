@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>PII Cleaner</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="app-header">
+  <div class="app-header-title">
+    <h1>PII Cleaner</h1>
+    <span class="badge badge-local">100% local &mdash; no network</span>
+    <span class="badge badge-csp" id="csp-indicator" title="Content-Security-Policy is active">CSP active: checking&hellip;</span>
+  </div>
+  <p class="app-header-sub">Sanitizes CrowdStrike Falcon and Rapid7 logs by replacing PII with typed, numbered tokens. Everything runs in this tab &mdash; nothing is ever sent anywhere.</p>
+</header>
+
+<main class="layout">
+  <section class="col col-input" aria-label="Input and options">
+    <div class="panel">
+      <h2>Input</h2>
+      <div class="field-row">
+        <label for="file-input" class="file-picker-label">Choose file&hellip;</label>
+        <input type="file" id="file-input" accept=".json,.ndjson,.txt,.log" class="visually-hidden-file">
+        <span id="format-label" class="format-label">format: (none)</span>
+      </div>
+      <textarea id="input-text" class="mono" placeholder="Paste JSON, NDJSON, or raw text here&hellip;" spellcheck="false"></textarea>
+      <div id="parse-error" class="error-box" hidden></div>
+    </div>
+
+    <div class="panel">
+      <h2>Options</h2>
+      <fieldset class="toggles">
+        <legend>Categories</legend>
+        <div class="toggle-grid" id="category-toggles"></div>
+      </fieldset>
+
+      <div class="custom-lists">
+        <div class="custom-list-field">
+          <label for="custom-host">Hostnames (one per line)</label>
+          <textarea id="custom-host" class="mono small" rows="3"></textarea>
+        </div>
+        <div class="custom-list-field">
+          <label for="custom-user">Usernames (one per line)</label>
+          <textarea id="custom-user" class="mono small" rows="3"></textarea>
+        </div>
+        <div class="custom-list-field">
+          <label for="custom-domain">Domains (one per line)</label>
+          <textarea id="custom-domain" class="mono small" rows="3"></textarea>
+        </div>
+        <div class="custom-list-field">
+          <label for="custom-other">Other sensitive strings (one per line)</label>
+          <textarea id="custom-other" class="mono small" rows="3"></textarea>
+        </div>
+      </div>
+
+      <div class="legend-import">
+        <label for="legend-import-file">Import legend (JSON)</label>
+        <input type="file" id="legend-import-file" accept="application/json,.json">
+        <span id="legend-import-status" class="hint"></span>
+      </div>
+
+      <div class="actions-row">
+        <button id="sanitize-btn" class="btn btn-primary" type="button">Sanitize <kbd>Ctrl/Cmd+Enter</kbd></button>
+        <button id="clear-btn" class="btn btn-danger" type="button">Clear session</button>
+      </div>
+      <div id="clear-confirm" class="confirm-box" hidden>
+        <p>Clear the input, dictionary, legend, and all custom lists? This cannot be undone.</p>
+        <button id="clear-confirm-yes" class="btn btn-danger" type="button">Yes, clear everything</button>
+        <button id="clear-confirm-no" class="btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="col col-output" aria-label="Output">
+    <div class="panel panel-output">
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" role="tab" aria-selected="true" data-tab="output" type="button">Output</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="legend" type="button">Legend</button>
+        <button class="tab-btn" role="tab" aria-selected="false" data-tab="leaks" type="button">Leak check <span id="leak-count-badge" class="count-badge" hidden>0</span></button>
+      </div>
+
+      <div id="stats-line" class="stats-line">No sanitize run yet.</div>
+
+      <div class="tab-panel" id="tab-output" role="tabpanel">
+        <div class="actions-row">
+          <button id="copy-btn" class="btn" type="button">Copy output</button>
+          <button id="download-output-btn" class="btn" type="button">Download output</button>
+          <span id="copy-status" class="hint"></span>
+        </div>
+        <textarea id="output-text" class="mono" readonly placeholder="Sanitized output will appear here."></textarea>
+      </div>
+
+      <div class="tab-panel" id="tab-legend" hidden role="tabpanel">
+        <div class="actions-row">
+          <input type="text" id="legend-filter" placeholder="Filter legend&hellip;">
+          <button id="download-legend-json-btn" class="btn" type="button">Download legend JSON</button>
+          <button id="download-legend-csv-btn" class="btn" type="button">Download legend CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table id="legend-table" class="mono">
+            <thead>
+              <tr>
+                <th data-sort="token">Token</th>
+                <th data-sort="type">Type</th>
+                <th data-sort="original">Original</th>
+                <th data-sort="count">Count</th>
+              </tr>
+            </thead>
+            <tbody id="legend-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-leaks" hidden role="tabpanel">
+        <p class="hint">Values that still look like PII after sanitizing. Re-run passes 2&ndash;3 detectors over the output and flags anything matched that isn't a token.</p>
+        <div id="leaks-list"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="app-footer">
+  <p>No data ever leaves this page. No browser-side persistence (local or session storage, IndexedDB) and no cookies are used. See README.md for how to verify this yourself.</p>
+</footer>
+
+<script src="sanitizer.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

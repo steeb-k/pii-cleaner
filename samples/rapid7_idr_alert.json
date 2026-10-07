@@ -1,0 +1,47 @@
+{
+  "id": "7f3c6a9e-4b2d-4e1a-9c3f-2d6b8a1e5f90",
+  "investigation_id": "2a9d1e3c-5b7f-4a8e-9d1c-3f5b7a9e1d2c",
+  "title": "Suspicious outbound connection from WKS-FIN-042",
+  "priority": "HIGH",
+  "status": "OPEN",
+  "disposition": "UNKNOWN",
+  "created_time": "2026-09-30T14:22:10.123Z",
+  "first_event_time": "2026-09-30T14:21:55.000Z",
+  "source_user": "jdoe",
+  "source_host": "WKS-FIN-042",
+  "source_ip": "10.20.30.40",
+  "destination_ip": "203.0.113.25",
+  "destination_host": "fileserver01.example.corp",
+  "domain": "example.corp",
+  "email": "jdoe@example.corp",
+  "url": "https://update.example.corp/payload.bin",
+  "asset": {
+    "asset_id": "4e2d9b7a-1c3f-4a5e-8b6d-7f9a1e3c5b7f",
+    "hostname": "WKS-FIN-042",
+    "ip_address": "10.20.30.40",
+    "mac_address": "AA:BB:CC:DD:EE:FF"
+  },
+  "users": [
+    {
+      "username": "jdoe",
+      "domain": "example.corp",
+      "sid": "S-1-5-21-111111111-222222222-333333333-1001"
+    }
+  ],
+  "indicators": [
+    {
+      "type": "ip",
+      "value": "203.0.113.25"
+    },
+    {
+      "type": "url",
+      "value": "https://update.example.corp/payload.bin"
+    },
+    {
+      "type": "hash",
+      "value": "44d88612fea8a8f36de82e1278abb02f44d88612fea8a8f36de82e1278abb02"
+    }
+  ],
+  "rrn": "rrn:investigation:00000000-0000-0000-0000-000000000000:investigation:7f3c6a9e-4b2d-4e1a-9c3f-2d6b8a1e5f90",
+  "alert_count": 3
+}
