@@ -38,7 +38,9 @@
     HOST: ['computername', 'hostname', 'host_name', 'device_name', 'hostnames', 'asset', 'asset_name', 'source_host', 'destination_host'],
     USER: ['username', 'user_name', 'user', 'userprincipal', 'logon_user', 'account', 'source_user', 'destination_user', 'samaccountname', 'actor_user', 'target_user', 'logonuser',
       // Rapid7 IDR account fields; values are often display names ("Firstname Lastname")
-      'account_name', 'account_names', 'source_account_name', 'source_account_names', 'destination_account_name', 'destination_account_names'],
+      'account_name', 'account_names', 'source_account_name', 'source_account_names', 'destination_account_name', 'destination_account_names',
+      // Identity / display-name fields; values are often "Lastname, Firstname"
+      'identity', 'userdisplayname', 'user_display_name', 'displayname', 'display_name'],
     DOMAIN: ['machinedomain', 'logondomain', 'domain', 'userdomain', 'dns_domain', 'source_domain'],
     // Organizational units. CrowdStrike hosts carry `ou` (one OU per element) and
     // `active_directory_dn_display` (backslash-joined OU paths, "Laptops\\Computers\\Finance").
@@ -333,7 +335,11 @@
       getOrCreateEntry(state, 'USER', bs[2]);
       return;
     }
-    if (looksLikeEmail(value)) learnEmailParts(value, state);
+    if (looksLikeEmail(value)) { learnEmailParts(value, state); return; }
+    // "Lastname, Firstname" also learns "Firstname Lastname", the form it
+    // usually takes in free text.
+    var lf = /^\s*([^,]+?)\s*,\s*([^,]+?)\s*$/.exec(value);
+    if (lf) getOrCreateEntry(state, 'USER', lf[2] + ' ' + lf[1]);
   }
 
   // ---------------------------------------------------------------------

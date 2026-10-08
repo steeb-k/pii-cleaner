@@ -83,7 +83,7 @@ Built-in key map (extend freely; keep in one table `FIELD_MAP` in sanitizer.js):
 | Type | Keys |
 |---|---|
 | HOST | ComputerName, hostname, host_name, HostName, device_name, DeviceName, hostnames, asset, asset_name, name (only when parent key is `host`/`asset`/`device`), source_host, destination_host, MachineDomain is DOMAIN not HOST |
-| USER | UserName, user_name, username, user, UserPrincipal, logon_user, account, source_user, destination_user, user.name, SamAccountName, actor_user, target_user, LogonUser, account_name(s), source_account_name(s), destination_account_name(s) (display names such as `Firstname Lastname` are one value, not split) |
+| USER | UserName, user_name, username, user, UserPrincipal, logon_user, account, source_user, destination_user, user.name, SamAccountName, actor_user, target_user, LogonUser, account_name(s), source_account_name(s), destination_account_name(s), identity, userDisplayName, user_display_name, displayName, display_name (display names such as `Firstname Lastname` are one value, not split; a `Lastname, Firstname` value also learns `Firstname Lastname` for the free-text sweep) |
 | DOMAIN | MachineDomain, LogonDomain, domain, UserDomain, dns_domain, source_domain |
 | OU | ou, ous, organizational_unit, organizationalunit, org_unit, ou_display, active_directory_dn_display |
 | EMAIL | email, mail, user_email, email_address, sender, recipient |

@@ -924,3 +924,42 @@ describe('account name fields', () => {
     assert.equal(JSON.parse(result.output).source_account_names[0], 'Firstname Lastname');
   });
 });
+
+// ---------------------------------------------------------------------------
+// USER: identity / userDisplayName ("Lastname, Firstname")
+// ---------------------------------------------------------------------------
+describe('identity and display-name fields', () => {
+  test('identity and userDisplayName are USER; "Last, First" also covers "First Last" in free text', () => {
+    const rec = {
+      identity: 'Lastname, Firstname',
+      userDisplayName: 'Lastname, Firstname',
+      user_display_name: 'Example, Pat',
+      message: 'Lastname, Firstname opened a ticket; Firstname Lastname closed it. Example, Pat watched.'
+    };
+    const { session, result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    const t1 = tokenFor(session, 'USER', 'Lastname, Firstname');
+    const t1r = tokenFor(session, 'USER', 'Firstname Lastname');
+    const t2 = tokenFor(session, 'USER', 'Example, Pat');
+    assert.ok(t1 && t1r && t2);
+    assert.equal(out.identity, t1);
+    assert.equal(out.userDisplayName, t1);
+    assert.equal(out.user_display_name, t2);
+    assert.equal(out.message, t1 + ' opened a ticket; ' + t1r + ' closed it. ' + t2 + ' watched.');
+    assert.ok(!result.output.includes('Firstname'));
+    assert.ok(!result.output.includes('Lastname'));
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('a display name without a comma is one token and is not split', () => {
+    const { session, result } = run(JSON.stringify({ userDisplayName: 'Firstname Lastname', note: 'Lastname alone stays' }));
+    const out = JSON.parse(result.output);
+    assert.equal(out.userDisplayName, tokenFor(session, 'USER', 'Firstname Lastname'));
+    assert.equal(out.note, 'Lastname alone stays');
+  });
+
+  test('USER toggle off leaves identity alone', () => {
+    const { result } = run(JSON.stringify({ identity: 'Lastname, Firstname' }), { enabled: { USER: false } });
+    assert.equal(JSON.parse(result.output).identity, 'Lastname, Firstname');
+  });
+});
