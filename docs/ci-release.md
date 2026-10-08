@@ -75,10 +75,11 @@ on nullgate and seed-sync**:
 | `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_PASSWORD`, `MACOS_NOTARY_TEAM_ID` | app-specific password form (or `MACOS_NOTARY_KEY`, `_KEY_ID`, `_ISSUER_ID` for an API key) |
 
 The signing material lives **outside the repository** in the maintainer's
-signing folder, which already holds a script that (re)sets these secrets on the
-other repos from those files without printing a value; point it at
-`steeb-k/pii-cleaner` (or run `gh secret set <NAME> -R steeb-k/pii-cleaner < file`
-for each).
+signing folder (`~/nullgate-signing`, shared with nullgate and seed-sync).
+`set-pii-cleaner-secrets.sh --apple-id <Apple ID>` there (re)sets all six from
+those files without printing a value; without `--apple-id` it sets the three
+certificate secrets and leaves the notary ones for a second run. Or run
+`gh secret set <NAME> -R steeb-k/pii-cleaner < file` for each.
 
 The `release` environment is auto-created by the first publish; add yourself
 as a required reviewer there if a release should wait for approval.
