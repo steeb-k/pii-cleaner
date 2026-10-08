@@ -29,3 +29,29 @@ jobs:
       # Build the deployable static web bundle and sanity-check its output.
       - run: bash scripts/build-web.sh
       - run: test -f dist/web/sanitizer.js
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: swift test --package-path apps/macos
+
+      # Ad-hoc signed here; release.yml is where the Developer ID signing and
+      # notarization happen. Universal, so the x86_64 slice compiles on every push.
+      - run: bash apps/macos/build-app.sh
+        env:
+          OBFUSCATE_UNIVERSAL: '1'
+
+      # The built app must be sandboxed and must not hold any network entitlement.
+      - name: Check entitlements
+        run: |
+          codesign -d --entitlements - "dist/macos/Obfuscate.app" > ents.txt 2>&1
+          cat ents.txt
+          grep -q "com.apple.security.app-sandbox" ents.txt
+          grep -q "com.apple.security.files.user-selected.read-write" ents.txt
+          grep -q "com.apple.security.cs.allow-jit" ents.txt
+          # Exactly those three entitlements, nothing else. (`if` instead of a bare `! grep`,
+          # which `bash -e` ignores unless it happens to be the last command.)
+          test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 3
+          if grep -qi "network" ents.txt; then echo "network entitlement found"; exit 1; fi

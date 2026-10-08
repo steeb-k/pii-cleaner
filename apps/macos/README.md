@@ -1,10 +1,9 @@
-# PII Cleaner &mdash; macOS menu-bar app (plan)
+# Obfuscate &mdash; the PII Cleaner macOS menu-bar app
 
-No Xcode project exists yet. This document is the plan for a future
-SwiftUI menu-bar host app that embeds the shared sanitizer in
-[`core/`](../../core/README.md) via `JavaScriptCore`, so the detection
-logic stays identical across the web app, the CLI, and this host &mdash;
-only the UI differs.
+**Obfuscate** is a SwiftUI menu-bar app (no Dock icon) that embeds the shared sanitizer in
+[`core/`](../../core/README.md) via `JavaScriptCore`, so detection logic is
+identical across the web app, the CLI, and this host &mdash; only the UI differs.
+Everything is local: the app is sandboxed and has no network entitlement.
 
 ## Why JavaScriptCore
 
@@ -12,95 +11,100 @@ only the UI differs.
 Node-only globals (see `core/README.md`), and it ends its export tail with
 a `globalThis` fallback specifically so a bare `JSContext` (no `window`, no
 `module`) still gets `globalThis.PIISanitizer` after evaluating the file.
-That means **zero porting work**: no reimplementing 900+ lines of regex
-and field-mapping logic in Swift, and no risk of the macOS app's detection
+That means **zero porting work**: no reimplementing the regex and
+field-mapping logic in Swift, and no risk of the macOS app's detection
 drifting from the web app's.
 
-## Swift bridge sketch (~30 lines)
+## Layout
 
-```swift
-import JavaScriptCore
-
-final class PIICore {
-    private let ctx: JSContext
-    private let sessionObj: JSValue
-
-    init() throws {
-        guard let ctx = JSContext() else { throw PIICoreError.contextFailed }
-        // Surface JS exceptions and console.log (there should be none at runtime;
-        // core/sanitizer.js never calls console.* or throws outside sanitize()'s
-        // own try/catch) instead of failing silently.
-        ctx.exceptionHandler = { _, exception in
-            NSLog("PIICore JS exception: %@", exception?.toString() ?? "?")
-        }
-        guard let url = Bundle.main.url(forResource: "sanitizer", withExtension: "js"),
-              let src = try? String(contentsOf: url, encoding: .utf8) else {
-            throw PIICoreError.scriptMissing
-        }
-        ctx.evaluateScript(src)
-        guard let piiSanitizer = ctx.globalObject.objectForKeyedSubscript("PIISanitizer"),
-              let createSession = piiSanitizer.objectForKeyedSubscript("createSession"),
-              let session = createSession.call(withArguments: []) else {
-            throw PIICoreError.apiMissing
-        }
-        self.ctx = ctx
-        self.sessionObj = session
-    }
-
-    /// Sanitizes `text` and returns the output plus any possible-leak values.
-    func sanitize(_ text: String) -> (output: String, leaks: [String]) {
-        guard let sanitize = sessionObj.objectForKeyedSubscript("sanitize"),
-              let result = sanitize.call(withArguments: [text], this: sessionObj) else {
-            return (text, [])
-        }
-        let output = result.objectForKeyedSubscript("output")?.toString() ?? ""
-        let leaksVal = result.objectForKeyedSubscript("leaks")
-        let leaks = (leaksVal?.toArray() as? [[String: Any]] ?? [])
-            .map { "\($0["type"] ?? "?"): \($0["value"] ?? "")" }
-        return (output, leaks)
-    }
-}
-
-enum PIICoreError: Error { case contextFailed, scriptMissing, apiMissing }
+```
+Package.swift              SwiftPM package (tools 5.9, Swift 5 language mode, macOS 14+)
+Info.plist                 LSUIElement=true (menu-bar only), CFBundleIconFile=AppIcon
+Obfuscate.entitlements     app-sandbox + files.user-selected.read-write, nothing else
+build-app.sh               builds + bundles + ad-hoc signs dist/macos/Obfuscate.app
+Icons/AppIcon.iconset/     app icon PNGs (16..512 @1x/@2x); build-app.sh turns them into AppIcon.icns
+Icons/source/              SVG sources + generate_icons.py for the icon set
+Sources/PIICore/           library: JavaScriptCore bridge (Foundation + JavaScriptCore only)
+Sources/Obfuscate/         executable: SwiftUI/AppKit UI
+Sources/Obfuscate/Resources/  ObfuscateTemplate{,@2x,@3x}.png, the menu-bar template icon
+Tests/PIICoreTests/        bridge tests, JSC-vs-Node parity, no-network and icon-asset checks
 ```
 
-(`JSValue.call(withArguments:this:)` is the usual pattern for calling a
-method with the right `this`; the exact API surface should be re-checked
-against the Swift/JavaScriptCore version used once an Xcode project exists.)
-`sanitizer.js` would ship as a bundled resource (e.g. copied into the app
-bundle at build time from `core/sanitizer.js`, the same file the web app
-and CLI use unmodified &mdash; no fork, no transpile).
+There is no `.xcodeproj`; everything works from the command line.
 
-## App shape
+## Build, run, test
 
-- **SwiftUI menu-bar app** (`NSStatusItem` / `MenuBarExtra`), no Dock icon,
-  no main window by default &mdash; opens a small popover/panel on click.
-- **App Sandbox, no network entitlement.** The whole point of this app
-  (like the web app) is that logs never leave the machine; omitting
-  `com.apple.security.network.client`/`.server` entitlements makes that a
-  platform-enforced guarantee, not just a code-review one.
-- **Clipboard-in / clipboard-out** as the primary flow: read `NSPasteboard`
-  on a hotkey or button, run `PIICore.sanitize(_:)`, write the result back
-  to `NSPasteboard`, show a brief "leaks found" indicator if
-  `leaks` is non-empty (mirroring the web app's Leak check tab).
-- **Drag-and-drop file flow**: dropping one or more files onto the menu-bar
-  popover reads each with `String(contentsOf:)`, sanitizes them with one
-  shared `PIICore` session (consistent tokens across files, exactly like
-  `apps/cli`'s multi-file mode), and either writes sanitized copies next to
-  the originals (`<name>.sanitized.<ext>`) or copies the result to the
-  clipboard, user's choice.
-- **Legend storage**: in-memory only by default, matching the web app and
-  CLI's "no persistence unless you ask" rule. Only when the user explicitly
-  chooses to save a legend does it get written to
-  `~/Library/Application Support/PII Cleaner/legend.json` (via
-  `FileManager.default.urls(for: .applicationSupportDirectory, ...)`) &mdash;
-  never silently, and never anywhere iCloud/Dropbox-synced by default. The
-  on-disk format is exactly `core`'s `exportLegend()` JSON, so a legend can
-  be moved between this app, the web app, and the CLI interchangeably.
+```sh
+swift build --package-path apps/macos
+swift test  --package-path apps/macos      # or: npm run test:macos
+bash apps/macos/build-app.sh [--open]      # or: npm run build:macos
+```
 
-## Not yet done
+`build-app.sh` writes `dist/macos/Obfuscate.app` and a `ditto` zip next to it
+(git-ignored). Set `CONFIGURATION=debug` for a debug build, `OBFUSCATE_UNIVERSAL=1`
+for arm64 + x86_64, and `CODESIGN_IDENTITY` to sign with a Developer ID instead
+of ad-hoc (`OBFUSCATE_NOTARIZE=1` then notarizes and staples; see `docs/ci-release.md`). Quit the app from its popover, or
+`pkill -x Obfuscate`.
 
-- No Xcode project, target, or entitlements file exists in this repo yet.
-- No automated tests for this host (would need an XCTest target once the
-  project exists; `core/test/` already covers the shared logic this host
-  will call unmodified).
+## Icons
+
+The app icon lives in `Icons/AppIcon.iconset/` as PNGs; `build-app.sh` runs
+`iconutil` on that folder to produce `Contents/Resources/AppIcon.icns`, so
+nothing binary beyond the PNGs is committed. The menu-bar icon is
+`ObfuscateTemplate.png` (+`@2x`, `@3x`) under `Sources/Obfuscate/Resources/`.
+`build-app.sh` copies them flat into `Contents/Resources/` (next to
+`sanitizer.js`). Plain `swift build` does not compile asset catalogs, so
+`MenuBarIcon.swift` assembles the three PNGs into one template `NSImage` at
+runtime (looking in `Contents/Resources/` first, then SwiftPM's dev resource
+bundle, then an SF Symbol fallback); being a template, it follows the menu
+bar's light/dark tint. When the last sanitize
+reported possible leaks, a small warning badge is shown next to it.
+SVG sources and the generator script are in `Icons/source/`.
+
+## Where `sanitizer.js` comes from
+
+There is exactly one copy: `core/sanitizer.js`. It is never copied into the
+Swift source tree. `build-app.sh` copies it, unmodified, into the app's
+`Contents/Resources/` at build time. `CoreScript.locate()` uses
+`Bundle.main`'s resource if present, otherwise walks up from the source file
+to `<repo>/core/sanitizer.js` (used by tests and dev builds). A test asserts
+the resolved file is byte-identical to `core/sanitizer.js`.
+
+## Using it
+
+- **Sanitize clipboard**: reads text from the clipboard, sanitizes it, writes the result back.
+- **Drop zone**: drop one or more log files; they share one session so tokens stay consistent.
+  Then "Copy all to clipboard" (multiple files are joined with `// ==== <name> ====`
+  separators, like the CLI) or "Save…".
+- **Leaks** (red) lists possible leftover PII; the menu-bar icon changes when there are any.
+- **Types** toggles each PII type; **Custom values** pre-seeds HOST/USER/DOMAIN/CUSTOM lists.
+- **Legend**: import/export JSON (same format as the web app and CLI) or export CSV; "Clear session" resets.
+
+## Sandbox and no-network story
+
+The entitlements file contains only `com.apple.security.app-sandbox`,
+`com.apple.security.files.user-selected.read-write` and
+`com.apple.security.cs.allow-jit` (JavaScriptCore's JIT under the hardened
+runtime of signed builds; executable memory only). There is no
+`network.client`/`network.server`, so the OS blocks network access. Dropping a
+file grants read access to that file only; sibling directories are **not**
+writable, so sanitized files are never written next to the original. Output
+goes to the clipboard, or through a save panel (one file) / a folder chooser
+(several files, written as `<name>.sanitized.<ext>`, never overwriting
+&mdash; existing names get `-2`, `-3`, ...).
+`NoNetworkTests` and CI check the entitlements and the sources.
+
+## Legend storage
+
+In memory only, until you export it. The export panel defaults to
+`~/Library/Application Support/Obfuscate/` (created on demand; inside the
+sandbox this is the app container's equivalent). The JSON is exactly the
+core's `exportLegend()` output, interchangeable with the web app and CLI.
+
+## Limitations
+
+- No global hotkey in v1; the clipboard flow is button-driven from the popover
+  (a Carbon `RegisterEventHotKey` hotkey is a possible follow-up).
+- Local builds are ad-hoc signed (`codesign --sign -`), enough for the sandbox to
+  apply. Release builds are made by CI from a `v<version>` tag: universal, Developer
+  ID signed, notarized and stapled. See `docs/ci-release.md`.

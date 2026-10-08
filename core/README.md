@@ -1,7 +1,7 @@
 # @pii-cleaner/core
 
 Pure, dependency-free PII-sanitization logic shared by every host app in this
-repo (`apps/web`, `apps/cli`, and the planned `apps/macos`). This package has
+repo (`apps/web`, `apps/cli`, and `apps/macos`). This package has
 **no DOM access, no `require`/`process`/`Buffer` usage, and no network or
 storage calls** &mdash; it only touches `module`, and falls back through
 `globalThis`/`window`/`self`/`this` to attach its export, so it loads
@@ -25,7 +25,7 @@ const PIISanitizer = require('./core/sanitizer.js');
 ```
 
 ```swift
-// JavaScriptCore (planned apps/macos host)
+// JavaScriptCore (apps/macos host)
 let ctx = JSContext()!
 ctx.evaluateScript(try String(contentsOf: sanitizerJsURL))
 // PIISanitizer is now globalThis.PIISanitizer inside the context:

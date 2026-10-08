@@ -13,7 +13,7 @@ core/        pure, dependency-free sanitization logic (the product)
 apps/
   web/       single-page browser UI               (shipping)
   cli/       tiny Node command-line tool           (shipping)
-  macos/     SwiftUI menu-bar app, via JavaScriptCore (planned, README only)
+  macos/     "Obfuscate": SwiftUI menu-bar app, via JavaScriptCore (shipping)
 ```
 
 All the actual PII-detection behavior &mdash; field recognition, the regex
@@ -27,7 +27,7 @@ as-is in three completely different JS hosts:
 - **Node** &mdash; `require('./core/sanitizer.js')` picks it up via
   `module.exports`.
 - **Browser** &mdash; a `<script>` tag defines `window.PIISanitizer`.
-- **JavaScriptCore** (used by the planned macOS app) &mdash; has neither
+- **JavaScriptCore** (used by the macOS app) &mdash; has neither
   `module` nor `window`, so the core falls back through `globalThis` (and
   then `self`/`this`) to attach itself, giving `globalThis.PIISanitizer`
   with zero shimming.
@@ -51,11 +51,13 @@ pipeline order, field maps, token rules, non-goals).
 | `core/` | Shared sanitizer (`sanitizer.js`), its own unit tests, its API README |
 | `apps/web/` | Browser UI: `index.html`, `app.js`, `styles.css`, `serve.py`, tests |
 | `apps/cli/` | `pii-clean.js` Node CLI, tests |
-| `apps/macos/` | Plan for a SwiftUI + JavaScriptCore menu-bar app (no code yet) |
+| `apps/macos/` | Obfuscate: SwiftUI + JavaScriptCore menu-bar app (SwiftPM package, sandboxed, tests, `build-app.sh`) |
 | `samples/` | Synthetic CrowdStrike/Rapid7 fixtures, fictional values only |
 | `docs/SPEC.md` | Design spec: detection pipeline, field maps, token/case rules |
 | `scripts/build-web.sh` | Builds `dist/web/`, a flat deployable copy of the web app |
 | `.github/workflows/ci.yml` | Runs the test suite (minus headless-Chromium tests) on push/PR |
+| `.github/workflows/release.yml` | Tag-driven release: signed + notarized universal macOS build, GitHub release (`docs/ci-release.md`) |
+| `scripts/ci/`, `scripts/notarize-macos.sh` | CI keychain import and notarization helpers used by `release.yml` |
 
 ## Quick start
 
@@ -75,11 +77,15 @@ echo '{"ComputerName":"WKS-1","UserName":"jdoe"}' | node apps/cli/pii-clean.js
 See [`apps/cli/README.md`](apps/cli/README.md) for flags (`--legend-in`/
 `--legend-out`, `--disable`, `--quiet`) and exit codes.
 
-### macOS app
+### macOS app (Obfuscate)
 
-Not built yet &mdash; see [`apps/macos/README.md`](apps/macos/README.md) for
-the plan (SwiftUI menu bar, JavaScriptCore bridge, sandboxed with no
-network entitlement).
+```sh
+bash apps/macos/build-app.sh --open   # -> dist/macos/Obfuscate.app (menu-bar only)
+```
+
+Needs Xcode command-line tools (Swift 5.9+). See
+[`apps/macos/README.md`](apps/macos/README.md) for details (SwiftUI menu bar,
+JavaScriptCore bridge, App Sandbox with no network entitlement).
 
 ## Running the tests
 
@@ -88,6 +94,7 @@ npm test            # everything: core + web (static/runtime, not headless Chrom
 npm run test:core    # core/test/        - sanitizer unit tests
 npm run test:web     # apps/web/test/    - no-network statics + serve.py + headless Chromium
 npm run test:cli     # apps/cli/test/    - CLI behavior
+npm run test:macos   # apps/macos/Tests/ - Swift bridge, JSC-vs-Node parity, no-network (needs Xcode; not in npm test)
 ```
 
 (Equivalently: `node --test "core/test/*.test.js" "apps/web/test/*.test.js" "apps/cli/test/*.test.js"`.)
@@ -116,6 +123,15 @@ bash scripts/build-web.sh    # writes dist/web/
 `sanitizer.js` sits next to `index.html`. It's `.gitignore`d; rebuild it
 whenever you deploy.
 
+## Releasing the macOS app
+
+Push a `v<version>` tag matching `CFBundleShortVersionString` in
+`apps/macos/Info.plist` (and a `## [<version>]` section in `CHANGELOG.md`).
+`.github/workflows/release.yml` tests, builds a universal `Obfuscate.app` on a
+hosted Mac, signs it with the Developer ID from the repository secrets,
+notarizes and staples it, and publishes one GitHub release with the zip. A
+`v<version>-testN` tag makes a prerelease. See [`docs/ci-release.md`](docs/ci-release.md).
+
 ## The no-network guarantee
 
 Every host app here makes zero network requests, by construction:
@@ -128,8 +144,9 @@ Every host app here makes zero network requests, by construction:
   binds to `127.0.0.1` only.
 - The CLI touches only the files you pass it (plus, with `--legend-out`,
   the one legend file you named) and stdin/stdout/stderr.
-- The planned macOS app is specced to ship App Sandbox with no network
-  entitlement at all (see `apps/macos/README.md`).
+- The macOS app ships with App Sandbox and no network entitlement at all, so
+  the OS itself blocks network access (see `apps/macos/README.md`); its tests
+  and CI check the entitlements.
 
 Verify it yourself at any time:
 

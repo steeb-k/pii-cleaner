@@ -7,7 +7,9 @@
     "test:core": "node --test \"core/test/*.test.js\"",
     "test:web": "node --test \"apps/web/test/*.test.js\"",
     "test:cli": "node --test \"apps/cli/test/*.test.js\"",
+    "test:macos": "swift test --package-path apps/macos",
     "build:web": "bash scripts/build-web.sh",
+    "build:macos": "bash apps/macos/build-app.sh",
     "serve": "python3 apps/web/serve.py"
   }
 }

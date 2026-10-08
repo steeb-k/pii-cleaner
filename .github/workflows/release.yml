@@ -1,0 +1,201 @@
+# A tag becomes a release.
+#
+# Pushing `v<version>` runs the JS test suite, builds the macOS bundle on a
+# hosted Mac (universal, Developer ID signed, notarized, stapled), and publishes
+# ONE GitHub release with the zip attached. Same shape and the same secrets as
+# the nullgate and seed-sync repos: scripts/ci/macos-keychain.sh imports the
+# certificate into a throwaway keychain, apps/macos/build-app.sh signs with it,
+# scripts/notarize-macos.sh notarizes and staples. docs/ci-release.md has the
+# contract, the secrets table and the rollout checklist.
+#
+# Rehearsals: a `v<version>-test<N>` tag publishes a PRERELEASE;
+# `workflow_dispatch` with publish=false builds the artifact and publishes
+# nothing; sign=false proves the pipeline before the secrets exist.
+#
+# Actions are pinned by commit SHA: a tag can be moved to point at different code.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'An existing tag to build and publish (leave empty to build the current ref without publishing).'
+        required: false
+        default: ''
+        type: string
+      publish:
+        description: 'Publish the GitHub release. Off builds the artifact only.'
+        required: false
+        default: true
+        type: boolean
+      sign:
+        description: 'Sign and notarize the bundle. Off only for a rehearsal before the secrets exist.'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: core + web + cli tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: node --test "core/test/*.test.js"
+      - run: node --test apps/web/test/nonetwork.test.js
+      - run: node --test "apps/cli/test/*.test.js"
+
+  macos:
+    name: macOS universal bundle
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # A tag push always signs; a dispatch signs unless told not to. Either
+      # way the certificate has to exist for signing to happen.
+      WANT_SIGN: ${{ github.event_name == 'push' || inputs.sign }}
+      SIGN_MACOS: ${{ (github.event_name == 'push' || inputs.sign) && secrets.MACOS_CERTIFICATE_P12 != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Swift tests (bridge, JSC-vs-Node parity, no-network, icons)
+        run: swift test --package-path apps/macos
+
+      - name: Refuse to ship ad-hoc
+        if: env.WANT_SIGN == 'true' && env.SIGN_MACOS != 'true'
+        run: |
+          echo "::error::MACOS_CERTIFICATE_P12 is not set; a release bundle must be Developer-ID signed. Rehearse with sign=false instead."
+          exit 1
+
+      - name: Import the Developer ID certificate
+        if: env.SIGN_MACOS == 'true'
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: bash scripts/ci/macos-keychain.sh
+
+      - name: Build, sign, notarize and package
+        env:
+          # build-app.sh signs with CODESIGN_IDENTITY (set by the keychain step)
+          # and, with OBFUSCATE_NOTARIZE=1, notarizes + staples before zipping.
+          # Either notary credential form works.
+          OBFUSCATE_UNIVERSAL: '1'
+          OBFUSCATE_NOTARIZE: ${{ env.SIGN_MACOS == 'true' && '1' || '0' }}
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+        run: bash apps/macos/build-app.sh
+
+      - name: Check the asset, the slices, the entitlements and the signature
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/macos/Info.plist)"
+          zip="dist/macos/Obfuscate-$version-macos-universal.zip"
+          test -f "$zip" || { echo "::error::no $zip"; ls -la dist/macos; exit 1; }
+          app="dist/macos/Obfuscate.app"
+          lipo -archs "$app/Contents/MacOS/Obfuscate" | grep -q x86_64 || { echo "::error::Obfuscate is not universal"; exit 1; }
+          cmp core/sanitizer.js "$app/Contents/Resources/sanitizer.js"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements - "$app" > ents.txt 2>&1
+          grep -q "com.apple.security.app-sandbox" ents.txt
+          if grep -qi "network" ents.txt; then echo "::error::network entitlement found"; cat ents.txt; exit 1; fi
+          if [ "$SIGN_MACOS" = "true" ]; then
+            codesign -dv --verbose=2 "$app" 2>&1 | grep -E "^(Authority=Developer ID Application|TeamIdentifier=)"
+            # A stapled ticket is what lets Gatekeeper accept the bundle offline.
+            xcrun stapler validate "$app"
+            spctl -a -t exec -vv "$app"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos
+          path: dist/macos/Obfuscate-*-macos-universal.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    if: github.event_name == 'push' || (inputs.publish && inputs.tag != '')
+    needs: [gate, macos]
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+
+      - name: Version gate
+        id: release
+        # The tag is the authority. If it disagrees with Info.plist, publishing
+        # would put a version behind a tag nobody expects.
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="$(grep -A1 CFBundleShortVersionString apps/macos/Info.plist | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')"
+          base="${tag#v}"; base="${base%%-*}"
+          [ -n "$version" ] || { echo "::error::could not read CFBundleShortVersionString from apps/macos/Info.plist"; exit 1; }
+          [ "$base" = "$version" ] || { echo "::error::tag $tag does not match Info.plist version $version"; exit 1; }
+          case "$tag" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collect the asset
+        run: |
+          v="${{ steps.release.outputs.version }}"
+          mkdir -p dist
+          name="Obfuscate-$v-macos-universal.zip"
+          f="$(find artifacts -type f -name "$name" | head -1)"
+          [ -n "$f" ] || { echo "::error::missing asset $name"; exit 1; }
+          cp "$f" dist/
+          ls -la dist
+
+      - name: Release notes from the changelog
+        run: |
+          v="${{ steps.release.outputs.version }}"
+          # The `## [<version>]` section of CHANGELOG.md, or a one-liner.
+          awk -v v="$v" '
+            $0 ~ "^## \\["v"\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on {print}
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "Obfuscate $v." > notes.md; fi
+          cat notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --title "v${{ steps.release.outputs.version }}" --notes-file notes.md)
+          if [ "${{ steps.release.outputs.prerelease }}" = "true" ]; then
+            flags+=(--prerelease)
+          else
+            flags+=(--latest)
+          fi
+          gh release create "${{ steps.release.outputs.tag }}" "${flags[@]}" dist/*
