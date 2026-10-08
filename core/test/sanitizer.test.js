@@ -896,3 +896,31 @@ describe('OU fields', () => {
     assert.equal(e.count, 2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// USER: account display-name fields (source_account_names etc.)
+// ---------------------------------------------------------------------------
+describe('account name fields', () => {
+  test('source_account_names display names are USER tokens, whole and swept in free text', () => {
+    const rec = {
+      source_account_names: ['Firstname Lastname', 'Pat Q. Example'],
+      destination_account_name: 'Firstname Lastname',
+      message: 'Firstname Lastname logged on; FIRSTNAME LASTNAME retried. Lastname alone stays.'
+    };
+    const { session, result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    const t1 = tokenFor(session, 'USER', 'Firstname Lastname');
+    const t2 = tokenFor(session, 'USER', 'Pat Q. Example');
+    assert.ok(t1 && t2);
+    assert.deepEqual(out.source_account_names, [t1, t2]);
+    assert.equal(out.destination_account_name, t1);
+    assert.equal(out.message, t1 + ' logged on; ' + t1 + ' retried. Lastname alone stays.');
+    assert.ok(!result.output.includes('Firstname'));
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('USER toggle off leaves account names alone', () => {
+    const { result } = run(JSON.stringify({ source_account_names: ['Firstname Lastname'] }), { enabled: { USER: false } });
+    assert.equal(JSON.parse(result.output).source_account_names[0], 'Firstname Lastname');
+  });
+});

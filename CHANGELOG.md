@@ -3,6 +3,14 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
+## [Unreleased]
+
+- USER now also covers `source_account_names` and the other
+  `*account_name(s)` keys. A display name such as `Firstname Lastname` is one
+  token, and is replaced wherever it recurs in free text.
+- Web app: the page fits the browser window without page scroll; the input
+  and output boxes flex to use the available height.
+
 ## [0.9.1]
 
 - New `OU` type: Active Directory organizational units are scrubbed from `ou`

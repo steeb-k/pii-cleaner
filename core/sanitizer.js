@@ -36,7 +36,9 @@
   // Built-in key map. Keys are lower-cased leaf key names. Extend freely.
   var FIELD_MAP = {
     HOST: ['computername', 'hostname', 'host_name', 'device_name', 'hostnames', 'asset', 'asset_name', 'source_host', 'destination_host'],
-    USER: ['username', 'user_name', 'user', 'userprincipal', 'logon_user', 'account', 'source_user', 'destination_user', 'samaccountname', 'actor_user', 'target_user', 'logonuser'],
+    USER: ['username', 'user_name', 'user', 'userprincipal', 'logon_user', 'account', 'source_user', 'destination_user', 'samaccountname', 'actor_user', 'target_user', 'logonuser',
+      // Rapid7 IDR account fields; values are often display names ("Firstname Lastname")
+      'account_name', 'account_names', 'source_account_name', 'source_account_names', 'destination_account_name', 'destination_account_names'],
     DOMAIN: ['machinedomain', 'logondomain', 'domain', 'userdomain', 'dns_domain', 'source_domain'],
     // Organizational units. CrowdStrike hosts carry `ou` (one OU per element) and
     // `active_directory_dn_display` (backslash-joined OU paths, "Laptops\\Computers\\Finance").
