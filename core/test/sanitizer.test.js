@@ -965,56 +965,62 @@ describe('identity and display-name fields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exempt subtrees: no DOMAIN stripping under analysis_hour_destinations
+// Exempt subtrees: analysis_hour_destinations is skipped outright
 // ---------------------------------------------------------------------------
 describe('exempt subtrees', () => {
-  test('domains under analysis_hour_destinations are kept, everywhere else they are tokens', () => {
+  test('nothing under analysis_hour_destinations is touched; outside is sanitized as usual', () => {
+    const dest = [
+      { domain: 'updates.vendor.com', hostname: 'cdn01', dst_addr: '203.0.113.9', bytes: 10, note: 'to corp.example via ws01' },
+      { domain: 'corp.example', nested: { fqdn: 'login.microsoftonline.com', url: 'https://x.example/a', mail: 'a@b.com' } }
+    ];
     const rec = {
       domain: 'corp.example',
-      message: 'ws01.corp.example reached updates.vendor.com and corp.example',
-      analysis_hour_destinations: [
-        { domain: 'updates.vendor.com', hostname: 'cdn01', bytes: 10, note: 'to corp.example via ws01' },
-        { domain: 'corp.example', nested: { fqdn: 'login.microsoftonline.com' } }
-      ]
+      hostname: 'ws01',
+      message: 'ws01.corp.example reached updates.vendor.com from 203.0.113.9',
+      analysis_hour_destinations: dest
     };
     const { session, result } = run(JSON.stringify(rec));
     const out = JSON.parse(result.output);
-    const dom = tokenFor(session, 'DOMAIN', 'corp.example');
-    assert.ok(dom);
-    assert.equal(out.domain, dom);
-    // outside the subtree: FQDN sweep and learned-domain replacement as usual
+    assert.equal(out.domain, tokenFor(session, 'DOMAIN', 'corp.example'));
+    assert.equal(out.hostname, tokenFor(session, 'HOST', 'ws01'));
     assert.ok(!out.message.includes('corp.example'));
     assert.ok(!out.message.includes('vendor.com'));
-    // inside: domains untouched, in a `domain` key, nested, and in free text
-    const d = out.analysis_hour_destinations;
-    assert.equal(d[0].domain, 'updates.vendor.com');
-    assert.equal(d[1].domain, 'corp.example');
-    assert.equal(d[1].nested.fqdn, 'login.microsoftonline.com');
-    assert.ok(d[0].note.includes('corp.example'));
-    // other types still apply inside: the host learned from `host` is replaced
-    assert.equal(d[0].hostname, tokenFor(session, 'HOST', 'cdn01'));
-    assert.ok(!d[0].note.includes('ws01'));
+    assert.ok(!out.message.includes('203.0.113.9'));
+    // inside: byte-for-byte unchanged, even for values learned elsewhere (ws01, corp.example)
+    assert.deepEqual(out.analysis_hour_destinations, dest);
     assert.equal(result.leaks.length, 0);
-    assert.equal(session.exportLegend().entries.filter(e => e.type === 'DOMAIN' && e.original === 'login.microsoftonline.com').length, 0);
+    // nothing is learned from the skipped section
+    const learned = session.exportLegend().entries.map(e => e.original);
+    for (const v of ['cdn01', 'login.microsoftonline.com', 'https://x.example/a', 'a@b.com']) {
+      assert.ok(!learned.includes(v), v + ' was learned');
+    }
   });
 
-  test('the leak check still reports non-exempt types inside the subtree', () => {
-    const rec = { analysis_hour_destinations: { ip: '10.1.2.3', text: 'from 10.1.2.3' } };
-    const { result } = run(JSON.stringify(rec), { enabled: { IP: false } });
-    assert.equal(result.leaks.length, 0);
-    const { result: r2 } = run(JSON.stringify(rec));
-    assert.ok(!r2.output.includes('10.1.2.3'));
-    assert.equal(r2.leaks.length, 0);
-  });
-
-  test('key match is case-insensitive and the exemption ends with the subtree', () => {
+  test('key match is case-insensitive, at any depth, and the exemption ends with the subtree', () => {
     const rec = {
-      Analysis_Hour_Destinations: { domain: 'far.example' },
-      after: { domain: 'near.example' }
+      wrapper: { Analysis_Hour_Destinations: { domain: 'far.example', dst_addr: '198.51.100.7' } },
+      after: { domain: 'near.example', dst_addr: '198.51.100.8' }
     };
     const { session, result } = run(JSON.stringify(rec));
     const out = JSON.parse(result.output);
-    assert.equal(out.Analysis_Hour_Destinations.domain, 'far.example');
+    assert.deepEqual(out.wrapper.Analysis_Hour_Destinations, { domain: 'far.example', dst_addr: '198.51.100.7' });
     assert.equal(out.after.domain, tokenFor(session, 'DOMAIN', 'near.example'));
+    assert.equal(out.after.dst_addr, tokenFor(session, 'IP', '198.51.100.8'));
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('a per-type exemption switches off only the listed types', () => {
+    const S2 = require('../sanitizer.js');
+    S2.EXEMPT_SUBTREES.partial_section = ['DOMAIN'];
+    try {
+      const rec = { partial_section: { domain: 'far.example', dst_addr: '198.51.100.7' } };
+      const { session, result } = run(JSON.stringify(rec));
+      const out = JSON.parse(result.output);
+      assert.equal(out.partial_section.domain, 'far.example');
+      assert.equal(out.partial_section.dst_addr, tokenFor(session, 'IP', '198.51.100.7'));
+      assert.equal(result.leaks.length, 0);
+    } finally {
+      delete S2.EXEMPT_SUBTREES.partial_section;
+    }
   });
 });

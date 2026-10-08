@@ -123,11 +123,11 @@ PATH special-case: do not tokenize the whole path. Replace only the user segment
 `\\HOST\share`, replace it. Keep file names and extensions.
 
 **Exempt subtrees.** A second table, `EXEMPT_SUBTREES`, maps a key (matched
-case-insensitively, any depth) to the types that are switched off for every value
-under it: pass 1, pass 3 and the leak check all honour it, and nothing is learned
-from those values for the switched-off types. Other types still apply inside the
-subtree, and values learned elsewhere are still replaced there. First entry:
-`analysis_hour_destinations` → `DOMAIN`, because the domains of outgoing-traffic
+case-insensitively, at any depth) to what is left alone beneath it. `'*'` skips
+the subtree outright: no pass touches any value under the key, nothing is
+learned from it, and the leak check ignores it. A list of types instead switches
+off only those types beneath the key, with everything else still applied. First
+entry: `analysis_hour_destinations` → `'*'`, because outgoing-traffic
 destinations are the far end of the connection, not ours.
 
 ### Pass 2 — custom lists (user-supplied, one value per line, in UI textarea)

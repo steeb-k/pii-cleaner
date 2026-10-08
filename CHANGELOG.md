@@ -5,11 +5,12 @@ notes (see `docs/ci-release.md`).
 
 ## [Unreleased]
 
-- Exempt subtrees: domains under `analysis_hour_destinations` (outgoing-traffic
-  destinations) are no longer stripped, whether in a `domain` key, nested
-  deeper, or in free text within that section. Other types still apply there,
-  and the leak check does not flag those domains. The table `EXEMPT_SUBTREES`
-  in the core is the place to add more sections.
+- Exempt subtrees: everything under `analysis_hour_destinations`
+  (outgoing-traffic destinations) is left untouched, at any depth, including
+  values that are tokenized elsewhere in the same input. Nothing is learned
+  from that section and the leak check ignores it. The table
+  `EXEMPT_SUBTREES` in the core is the place to add more sections, either
+  skipped outright or with only some types switched off.
 
 ## [0.9.2]
 

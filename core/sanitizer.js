@@ -30,20 +30,25 @@
   // entirely of already-learned OUs. The leak check applies the same rule.
   var CONTEXT_ONLY_TYPES = new Set(['OU']);
 
-  // Subtrees in which some types are left alone. Keyed by lower-cased key name;
-  // every value under that key (any depth) is processed with the listed types
-  // switched off, in pass 1, pass 3 and the leak check. Outgoing-traffic
-  // destinations are the first case: the domains there are the far end, not ours.
+  // Subtrees that are left alone. Keyed by lower-cased key name (matched at any
+  // depth). '*' skips the subtree outright: no pass touches it, nothing is learned
+  // from it, and the leak check ignores it. A list of types instead switches off
+  // only those types beneath the key. Outgoing-traffic destinations are the first
+  // case: everything there is the far end of the connection, not ours.
   var EXEMPT_SUBTREES = {
-    analysis_hour_destinations: ['DOMAIN']
+    analysis_hour_destinations: '*'
   };
 
-  // `enabled` for the values under `key`: the same object unless the key opens an
-  // exempt subtree, in which case a copy with those types off.
+  function skipSubtree(key) {
+    return key != null && EXEMPT_SUBTREES[String(key).toLowerCase()] === '*';
+  }
+
+  // `enabled` for the values under `key`: the same object unless the key opens a
+  // partially exempt subtree, in which case a copy with those types off.
   function subtreeEnabled(enabled, key) {
     if (key == null) return enabled;
     var off = EXEMPT_SUBTREES[String(key).toLowerCase()];
-    if (!off) return enabled;
+    if (!off || off === '*') return enabled;
     var copy = Object.assign({}, enabled);
     for (var i = 0; i < off.length; i++) copy[off[i]] = false;
     return copy;
@@ -417,6 +422,7 @@
   }
 
   function processValue(value, state, enabled, statsAcc, leafKey, containerKey) {
+    if (skipSubtree(leafKey)) return value;
     enabled = subtreeEnabled(enabled, leafKey);
     if (Array.isArray(value)) {
       return value.map(function (v) { return processValue(v, state, enabled, statsAcc, leafKey, containerKey); });
@@ -458,6 +464,7 @@
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
       for (var k = 0; k < keys.length; k++) {
+        if (skipSubtree(keys[k])) continue;
         node[keys[k]] = sweepTree(node[keys[k]], state, subtreeEnabled(enabled, keys[k]), statsAcc);
       }
       return node;
@@ -724,7 +731,10 @@
     if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) collectStrings(node[i], out, enabled); return out; }
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
-      for (var k = 0; k < keys.length; k++) collectStrings(node[keys[k]], out, subtreeEnabled(enabled, keys[k]));
+      for (var k = 0; k < keys.length; k++) {
+        if (skipSubtree(keys[k])) continue;
+        collectStrings(node[keys[k]], out, subtreeEnabled(enabled, keys[k]));
+      }
     }
     return out;
   }
