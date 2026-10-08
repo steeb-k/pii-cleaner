@@ -123,12 +123,20 @@ PATH special-case: do not tokenize the whole path. Replace only the user segment
 `\\HOST\share`, replace it. Keep file names and extensions.
 
 **Exempt subtrees.** A second table, `EXEMPT_SUBTREES`, maps a key (matched
-case-insensitively, at any depth) to what is left alone beneath it. `'*'` skips
-the subtree outright: no pass touches any value under the key, nothing is
-learned from it, and the leak check ignores it. A list of types instead switches
-off only those types beneath the key, with everything else still applied. First
-entry: `analysis_hour_destinations` → `'*'`, because outgoing-traffic
-destinations are the far end of the connection, not ours.
+case-insensitively, at any depth) to a rule for everything beneath it:
+
+- `'*'` skips the subtree outright: no pass touches any value under the key,
+  nothing is learned from it, and the leak check ignores it.
+- `['DOMAIN', ...]` switches off only the listed types beneath the key.
+- `{ mode: 'learned', privateIps: true }` detects and learns nothing inside, but
+  values already known from elsewhere in the input (and from the custom lists)
+  are still replaced there, including host labels in front of a known domain.
+  With `privateIps`, RFC 1918, link-local, loopback and ULA addresses inside
+  are tokenized as well, since they are local by definition.
+
+First entry: `analysis_hour_destinations` → `{ mode: 'learned', privateIps: true }`.
+The far end of outgoing traffic is not ours, but our own hosts, users, domains
+and private addresses still are.
 
 ### Pass 2 — custom lists (user-supplied, one value per line, in UI textarea)
 Four textareas: Hostnames, Usernames, Domains, Other sensitive strings (→ CUSTOM).

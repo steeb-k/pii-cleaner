@@ -5,12 +5,13 @@ notes (see `docs/ci-release.md`).
 
 ## [0.9.3]
 
-- Exempt subtrees: everything under `analysis_hour_destinations`
-  (outgoing-traffic destinations) is left untouched, at any depth, including
-  values that are tokenized elsewhere in the same input. Nothing is learned
-  from that section and the leak check ignores it. The table
-  `EXEMPT_SUBTREES` in the core is the place to add more sections, either
-  skipped outright or with only some types switched off.
+- Exempt subtrees: under `analysis_hour_destinations` (outgoing-traffic
+  destinations) nothing is detected or learned, so vendor domains, public IPs
+  and the like stay as they are. Values known from elsewhere in the input,
+  such as your own domain, hosts and users, are still replaced there, and
+  private addresses (RFC 1918, link-local, loopback) are always tokenized. The
+  table `EXEMPT_SUBTREES` in the core is the place to add more sections, with
+  this rule, skipped outright, or with only some types switched off.
 
 ## [0.9.2]
 

@@ -965,38 +965,80 @@ describe('identity and display-name fields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exempt subtrees: analysis_hour_destinations is skipped outright
+// Exempt subtrees: analysis_hour_destinations keeps the far end, loses ours
 // ---------------------------------------------------------------------------
 describe('exempt subtrees', () => {
-  test('nothing under analysis_hour_destinations is touched; outside is sanitized as usual', () => {
-    const dest = [
-      { domain: 'updates.vendor.com', hostname: 'cdn01', dst_addr: '203.0.113.9', bytes: 10, note: 'to corp.example via ws01' },
-      { domain: 'corp.example', nested: { fqdn: 'login.microsoftonline.com', url: 'https://x.example/a', mail: 'a@b.com' } }
-    ];
+  test('inside analysis_hour_destinations only values known from elsewhere and private IPs are replaced', () => {
     const rec = {
       domain: 'corp.example',
       hostname: 'ws01',
-      message: 'ws01.corp.example reached updates.vendor.com from 203.0.113.9',
-      analysis_hour_destinations: dest
+      user: 'jdoe',
+      message: 'ws01.corp.example reached other.vendor.net from 203.0.113.9',
+      analysis_hour_destinations: [
+        { domain: 'updates.vendor.com', hostname: 'cdn01', dst_addr: '203.0.113.9', bytes: 10, note: 'to corp.example via ws01 for jdoe' },
+        { domain: 'corp.example', fqdn: 'fileserver01.corp.example', dst_addr: '10.20.30.40', nested: { fqdn: 'login.microsoftonline.com', url: 'https://x.example/a', mail: 'a@b.com', v6: 'fe80::1' } },
+        { dst_addr: '172.31.0.9', other: '172.32.0.9', loop: '127.0.0.1', pub6: '2001:db8::1' }
+      ]
     };
     const { session, result } = run(JSON.stringify(rec));
     const out = JSON.parse(result.output);
-    assert.equal(out.domain, tokenFor(session, 'DOMAIN', 'corp.example'));
-    assert.equal(out.hostname, tokenFor(session, 'HOST', 'ws01'));
-    assert.ok(!out.message.includes('corp.example'));
+    const dom = tokenFor(session, 'DOMAIN', 'corp.example');
+    const host = tokenFor(session, 'HOST', 'ws01');
+    const user = tokenFor(session, 'USER', 'jdoe');
+    const pubIp = tokenFor(session, 'IP', '203.0.113.9');
+    assert.ok(dom && host && user && pubIp);
     assert.ok(!out.message.includes('vendor.com'));
-    assert.ok(!out.message.includes('203.0.113.9'));
-    // inside: byte-for-byte unchanged, even for values learned elsewhere (ws01, corp.example)
-    assert.deepEqual(out.analysis_hour_destinations, dest);
+    const d = out.analysis_hour_destinations;
+    // far end untouched: vendor domain, cdn host, public IP, nested domain/url/mail
+    assert.equal(d[0].domain, 'updates.vendor.com');
+    assert.equal(d[0].hostname, 'cdn01');
+    assert.equal(d[1].nested.fqdn, 'login.microsoftonline.com');
+    assert.equal(d[1].nested.url, 'https://x.example/a');
+    assert.equal(d[1].nested.mail, 'a@b.com');
+    assert.equal(d[2].other, '172.32.0.9');
+    assert.equal(d[2].pub6, '2001:db8::1');
+    // ours replaced: learned domain/host/user, also in free text, and a host label
+    // in front of our learned domain
+    assert.equal(d[1].domain, dom);
+    assert.equal(d[0].note, 'to ' + dom + ' via ' + host + ' for ' + user);
+    assert.equal(d[1].fqdn, tokenFor(session, 'HOST', 'fileserver01') + '.' + dom);
+    // the public IP was learned from `message`, so it is replaced inside too
+    assert.equal(d[0].dst_addr, pubIp);
+    // private addresses are always tokenized inside
+    assert.equal(d[1].dst_addr, tokenFor(session, 'IP', '10.20.30.40'));
+    assert.equal(d[2].dst_addr, tokenFor(session, 'IP', '172.31.0.9'));
+    assert.equal(d[2].loop, tokenFor(session, 'IP', '127.0.0.1'));
+    assert.equal(d[1].nested.v6, tokenFor(session, 'IP', 'fe80::1'));
     assert.equal(result.leaks.length, 0);
-    // nothing is learned from the skipped section
+    // nothing else is learned from the section
     const learned = session.exportLegend().entries.map(e => e.original);
-    for (const v of ['cdn01', 'login.microsoftonline.com', 'https://x.example/a', 'a@b.com']) {
+    for (const v of ['cdn01', 'login.microsoftonline.com', 'https://x.example/a', 'a@b.com', 'updates.vendor.com', '172.32.0.9']) {
       assert.ok(!learned.includes(v), v + ' was learned');
     }
+    
   });
 
-  test('key match is case-insensitive, at any depth, and the exemption ends with the subtree', () => {
+  test('a value learned only later in the input is still replaced inside the section', () => {
+    const rec = [
+      { analysis_hour_destinations: { dst_addr: '203.0.113.9', domain: 'corp.example' } },
+      { domain: 'corp.example', message: 'seen 203.0.113.9' }
+    ];
+    const { session, result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    assert.equal(out[0].analysis_hour_destinations.dst_addr, tokenFor(session, 'IP', '203.0.113.9'));
+    assert.equal(out[0].analysis_hour_destinations.domain, tokenFor(session, 'DOMAIN', 'corp.example'));
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('custom-list values are replaced inside the section; the leak check flags known values left over', () => {
+    const session = newSession();
+    session.addCustom('DOMAIN', ['vendor.com']);
+    const r = session.sanitize(JSON.stringify({ analysis_hour_destinations: { domain: 'updates.vendor.com' } }));
+    assert.ok(!r.output.includes('vendor.com'));
+    assert.equal(r.leaks.length, 0);
+  });
+
+  test('key match is case-insensitive, at any depth, and the rule ends with the subtree', () => {
     const rec = {
       wrapper: { Analysis_Hour_Destinations: { domain: 'far.example', dst_addr: '198.51.100.7' } },
       after: { domain: 'near.example', dst_addr: '198.51.100.8' }
@@ -1009,17 +1051,30 @@ describe('exempt subtrees', () => {
     assert.equal(result.leaks.length, 0);
   });
 
-  test('a per-type exemption switches off only the listed types', () => {
+  test('IP toggle off leaves private addresses inside the section alone', () => {
+    const { result } = run(JSON.stringify({ analysis_hour_destinations: { dst_addr: '10.0.0.1' } }), { enabled: { IP: false } });
+    assert.equal(JSON.parse(result.output).analysis_hour_destinations.dst_addr, '10.0.0.1');
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test("'*' skips a subtree outright and a type list switches off only those types", () => {
     const S2 = require('../sanitizer.js');
+    S2.EXEMPT_SUBTREES.skipped_section = '*';
     S2.EXEMPT_SUBTREES.partial_section = ['DOMAIN'];
     try {
-      const rec = { partial_section: { domain: 'far.example', dst_addr: '198.51.100.7' } };
+      const rec = {
+        hostname: 'ws01',
+        skipped_section: { hostname: 'ws01', dst_addr: '10.0.0.1' },
+        partial_section: { domain: 'far.example', dst_addr: '198.51.100.7' }
+      };
       const { session, result } = run(JSON.stringify(rec));
       const out = JSON.parse(result.output);
+      assert.deepEqual(out.skipped_section, { hostname: 'ws01', dst_addr: '10.0.0.1' });
       assert.equal(out.partial_section.domain, 'far.example');
       assert.equal(out.partial_section.dst_addr, tokenFor(session, 'IP', '198.51.100.7'));
       assert.equal(result.leaks.length, 0);
     } finally {
+      delete S2.EXEMPT_SUBTREES.skipped_section;
       delete S2.EXEMPT_SUBTREES.partial_section;
     }
   });

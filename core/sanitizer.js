@@ -30,28 +30,50 @@
   // entirely of already-learned OUs. The leak check applies the same rule.
   var CONTEXT_ONLY_TYPES = new Set(['OU']);
 
-  // Subtrees that are left alone. Keyed by lower-cased key name (matched at any
-  // depth). '*' skips the subtree outright: no pass touches it, nothing is learned
-  // from it, and the leak check ignores it. A list of types instead switches off
-  // only those types beneath the key. Outgoing-traffic destinations are the first
-  // case: everything there is the far end of the connection, not ours.
+  // Subtrees with their own rules. Keyed by lower-cased key name (matched at any
+  // depth). Values:
+  //   '*'                       skip outright: no pass touches it, nothing is
+  //                             learned from it, the leak check ignores it
+  //   ['DOMAIN', ...]           only the listed types are switched off beneath it
+  //   { mode: 'learned',        nothing is detected or learned inside, but values
+  //     privateIps: true }      already known from elsewhere (and custom lists) are
+  //                             still replaced; privateIps also tokenizes RFC 1918,
+  //                             link-local and loopback addresses found inside
+  // Outgoing-traffic destinations are the first case: the far end of a connection
+  // is not ours, but our own hosts, users and private addresses still are.
   var EXEMPT_SUBTREES = {
-    analysis_hour_destinations: '*'
+    analysis_hour_destinations: { mode: 'learned', privateIps: true }
   };
 
-  function skipSubtree(key) {
-    return key != null && EXEMPT_SUBTREES[String(key).toLowerCase()] === '*';
+  // Normalized rule for the values under `key`: null, 'skip', { off: [...] } or
+  // { learned: true, privateIps: bool }.
+  function subtreeRule(key) {
+    if (key == null) return null;
+    var v = EXEMPT_SUBTREES[String(key).toLowerCase()];
+    if (!v) return null;
+    if (v === '*') return 'skip';
+    if (Array.isArray(v)) return { off: v };
+    if (v.mode === 'learned') return { learned: true, privateIps: !!v.privateIps };
+    return null;
   }
+
+  function skipSubtree(key) { return subtreeRule(key) === 'skip'; }
 
   // `enabled` for the values under `key`: the same object unless the key opens a
   // partially exempt subtree, in which case a copy with those types off.
   function subtreeEnabled(enabled, key) {
-    if (key == null) return enabled;
-    var off = EXEMPT_SUBTREES[String(key).toLowerCase()];
-    if (!off || off === '*') return enabled;
+    var rule = subtreeRule(key);
+    if (!rule || !rule.off) return enabled;
     var copy = Object.assign({}, enabled);
-    for (var i = 0; i < off.length; i++) copy[off[i]] = false;
+    for (var i = 0; i < rule.off.length; i++) copy[rule.off[i]] = false;
     return copy;
+  }
+
+  // Addresses that are local by definition: RFC 1918, link-local, loopback, ULA.
+  var PRIVATE_IPV4_RE = /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
+  var PRIVATE_IPV6_RE = /^(?:f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:|::1$)/i;
+  function isPrivateIp(v) {
+    return PRIVATE_IPV4_RE.test(v) || PRIVATE_IPV6_RE.test(v);
   }
   // `OU=<name>` inside a DN; the value runs to the next `,` / `;` / `+` or line end,
   // tolerating LDAP-escaped characters ("OU=Sales\, EMEA").
@@ -422,7 +444,8 @@
   }
 
   function processValue(value, state, enabled, statsAcc, leafKey, containerKey) {
-    if (skipSubtree(leafKey)) return value;
+    var rule = subtreeRule(leafKey);
+    if (rule === 'skip' || (rule && rule.learned)) return value; // pass 1 never looks inside
     enabled = subtreeEnabled(enabled, leafKey);
     if (Array.isArray(value)) {
       return value.map(function (v) { return processValue(v, state, enabled, statsAcc, leafKey, containerKey); });
@@ -456,21 +479,48 @@
 
   // Second tree walk: pass-3 regex sweep applied to every string leaf,
   // regardless of key, after pass 1 has already tokenized recognised fields.
-  function sweepTree(node, state, enabled, statsAcc) {
+  // `learned` is the { learned, privateIps } rule in force (see EXEMPT_SUBTREES),
+  // or null for the full sweep.
+  function sweepTree(node, state, enabled, statsAcc, learned) {
     if (Array.isArray(node)) {
-      for (var i = 0; i < node.length; i++) node[i] = sweepTree(node[i], state, enabled, statsAcc);
+      for (var i = 0; i < node.length; i++) node[i] = sweepTree(node[i], state, enabled, statsAcc, learned);
       return node;
     }
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
       for (var k = 0; k < keys.length; k++) {
-        if (skipSubtree(keys[k])) continue;
-        node[keys[k]] = sweepTree(node[keys[k]], state, subtreeEnabled(enabled, keys[k]), statsAcc);
+        var rule = subtreeRule(keys[k]);
+        if (rule === 'skip') continue;
+        var childLearned = (rule && rule.learned) ? rule : learned;
+        node[keys[k]] = sweepTree(node[keys[k]], state, subtreeEnabled(enabled, keys[k]), statsAcc, childLearned);
       }
       return node;
     }
-    if (typeof node === 'string') return sweepString(node, state, enabled, statsAcc);
+    if (typeof node === 'string') {
+      return learned ? sweepLearned(node, state, enabled, statsAcc, learned.privateIps) : sweepString(node, state, enabled, statsAcc);
+    }
     return node;
+  }
+
+  // Reduced sweep for 'learned' subtrees: values already known (custom lists are
+  // part of the dictionary), host labels in front of a learned domain token, and
+  // optionally private addresses. No other detector, so nothing new is learned
+  // from the subtree except those private addresses.
+  function sweepLearned(str, state, enabled, statsAcc, privateIps) {
+    var s = dictionaryReplace(str, state, enabled, statsAcc);
+    s = tokenizeHostBeforeDomain(s, state, enabled, statsAcc);
+    if (privateIps && enabled.IP) {
+      s = mapOutsideTokens(s, function (chunk) {
+        return chunk.replace(IPV6_RE, function (m) {
+          if (isMacShaped(m) || !/\d/.test(m) || !isPrivateIp(m)) return m;
+          return emitToken(state, 'IP', m, statsAcc);
+        });
+      });
+      s = mapOutsideTokens(s, function (chunk) {
+        return chunk.replace(IPV4_RE, function (m) { return isPrivateIp(m) ? emitToken(state, 'IP', m, statsAcc) : m; });
+      });
+    }
+    return s;
   }
 
   // ---------------------------------------------------------------------
@@ -666,6 +716,8 @@
     texts.forEach(function (item) {
       var outputText = (item && typeof item === 'object') ? item.text : item;
       var enabled = (item && typeof item === 'object' && item.enabled) ? item.enabled : defaultEnabled;
+      // a leaf from a 'learned' subtree: only known values (and private addresses) count
+      var learned = (item && typeof item === 'object' && item.learned) ? item.learned : null;
       if (typeof outputText !== 'string' || !outputText) return;
 
       // host label glued to a domain token: "fileserver01.{{DOMAIN_1}}"
@@ -689,6 +741,14 @@
           if (lcText.indexOf(entryLc(entry)) === -1 || isTokenString(String(entry.original))) return;
           scanRe(entryRegex(entry), chunk, offset, outputText, entry.type, 0, null);
         });
+
+        if (learned) {
+          if (learned.privateIps && enabled.IP) {
+            scanRe(IPV6_RE, chunk, offset, outputText, 'IP', 0, function (v) { return !isMacShaped(v) && /\d/.test(v) && isPrivateIp(v); });
+            scanRe(IPV4_RE, chunk, offset, outputText, 'IP', 0, isPrivateIp);
+          }
+          return;
+        }
 
         if (enabled.OU) {
           scanRe(DN_OU_RE, chunk, offset, outputText, 'OU', 1, function (v) { return v.trim().length > 0; });
@@ -724,16 +784,17 @@
     return leaks;
   }
 
-  // String leaves for the leak check, each with the type set in force where it
-  // sits (see EXEMPT_SUBTREES).
-  function collectStrings(node, out, enabled) {
-    if (typeof node === 'string') { out.push({ text: node, enabled: enabled }); return out; }
-    if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) collectStrings(node[i], out, enabled); return out; }
+  // String leaves for the leak check, each with the type set and subtree rule in
+  // force where it sits (see EXEMPT_SUBTREES).
+  function collectStrings(node, out, enabled, learned) {
+    if (typeof node === 'string') { out.push({ text: node, enabled: enabled, learned: learned || null }); return out; }
+    if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) collectStrings(node[i], out, enabled, learned); return out; }
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
       for (var k = 0; k < keys.length; k++) {
-        if (skipSubtree(keys[k])) continue;
-        collectStrings(node[keys[k]], out, subtreeEnabled(enabled, keys[k]));
+        var rule = subtreeRule(keys[k]);
+        if (rule === 'skip') continue;
+        collectStrings(node[keys[k]], out, subtreeEnabled(enabled, keys[k]), (rule && rule.learned) ? rule : learned);
       }
     }
     return out;
