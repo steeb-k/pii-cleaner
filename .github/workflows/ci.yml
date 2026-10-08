@@ -12,10 +12,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       # Core sanitizer unit tests.
-      - run: node --test core/test/
+      - run: node --test "core/test/*.test.js"
 
       # Web app's static/no-network + serve.py checks only.
       # browser.test.js (headless Chromium) needs a chromium binary and is
@@ -24,7 +24,7 @@ jobs:
       - run: node --test apps/web/test/nonetwork.test.js
 
       # CLI host tests.
-      - run: node --test apps/cli/test/
+      - run: node --test "apps/cli/test/*.test.js"
 
       # Build the deployable static web bundle and sanity-check its output.
       - run: bash scripts/build-web.sh

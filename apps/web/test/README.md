@@ -5,7 +5,7 @@ is unit-tested separately under `core/test/`. Run everything (Node 22+,
 tested on Node 26; no npm installs) from the repo root:
 
 ```sh
-node --test apps/web/test/
+node --test "apps/web/test/*.test.js"
 ```
 
 Files:

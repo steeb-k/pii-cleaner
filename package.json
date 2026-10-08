@@ -3,10 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "test": "node --test core/test/ apps/web/test/ apps/cli/test/",
-    "test:core": "node --test core/test/",
-    "test:web": "node --test apps/web/test/",
-    "test:cli": "node --test apps/cli/test/",
+    "test": "node --test \"core/test/*.test.js\" \"apps/web/test/*.test.js\" \"apps/cli/test/*.test.js\"",
+    "test:core": "node --test \"core/test/*.test.js\"",
+    "test:web": "node --test \"apps/web/test/*.test.js\"",
+    "test:cli": "node --test \"apps/cli/test/*.test.js\"",
     "build:web": "bash scripts/build-web.sh",
     "serve": "python3 apps/web/serve.py"
   }

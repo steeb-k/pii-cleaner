@@ -179,7 +179,7 @@ see [`core/README.md`](../../core/README.md) for the API.
 From the repo root:
 
 ```sh
-node --test apps/web/test/    # or: npm run test:web
+node --test "apps/web/test/*.test.js"    # or: npm run test:web
 ```
 
 This app's tests are `nonetwork.test.js` (static no-network checks plus

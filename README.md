@@ -90,7 +90,7 @@ npm run test:web     # apps/web/test/    - no-network statics + serve.py + headl
 npm run test:cli     # apps/cli/test/    - CLI behavior
 ```
 
-(Equivalently: `node --test core/test/ apps/web/test/ apps/cli/test/`.)
+(Equivalently: `node --test "core/test/*.test.js" "apps/web/test/*.test.js" "apps/cli/test/*.test.js"`.)
 
 `apps/web/test/browser.test.js` drives a headless Chromium instance over
 the DevTools Protocol and needs a Chromium binary (`/usr/bin/chromium` or
