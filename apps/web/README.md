@@ -1,4 +1,4 @@
-# PII Cleaner &mdash; web app
+# Obfuscate &mdash; web app
 
 A local-only, single-page web app that sanitizes CrowdStrike Falcon and
 Rapid7 (InsightIDR / InsightVM) JSON logs by replacing PII with typed,
@@ -113,7 +113,7 @@ To verify this yourself:
 `{{TYPE_N}}`, with `N` starting at 1 per type, per session. Types:
 
 ```
-HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
+HOST, USER, DOMAIN, OU, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
 ```
 
 - `IP` covers both IPv4 and IPv6.

@@ -57,8 +57,11 @@ describe('static: CSP and includes', () => {
     const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
     const links = [...html.matchAll(/<link[^>]*href="([^"]+)"/g)].map((m) => m[1]);
     assert.deepEqual(scripts, ['../../core/sanitizer.js', 'app.js']);
-    // styles.css + an inline data: favicon (prevents an implicit /favicon.ico request)
-    assert.deepEqual(links.sort(), ['data:,', 'styles.css']);
+    // styles.css + inlined data: icons (the macOS app icon; also prevents an implicit /favicon.ico request)
+    const nonData = links.filter((h) => !h.startsWith('data:image/png;base64,'));
+    assert.deepEqual(nonData, ['styles.css']);
+    assert.ok(links.length > nonData.length, 'expected at least one inlined data: icon');
+    assert.doesNotMatch(html, /<img[^>]*src="(?!data:image\/png;base64,)/i, 'img sources must be inlined data: URIs');
     assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'no inline scripts (CSP script-src self would block them)');
     assert.doesNotMatch(html, /\son[a-z]+\s*=/i, 'no inline event handlers (blocked by CSP)');
   });

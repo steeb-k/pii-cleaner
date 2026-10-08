@@ -66,10 +66,11 @@ Show a parse error inline, never throw to console only.
 `{{TYPE_N}}` with N starting at 1 per type. Types:
 `HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, CUSTOM`
 (IPv6 uses `IP` too. `ID` covers GUID/UUID, CrowdStrike aid/cid, Rapid7 asset ids, serial numbers, phone numbers map to `PHONE`.)
-Add `PHONE` to the list. Final list: HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM.
+Add `PHONE` to the list. `OU` covers Active Directory organizational units.
+Final list: HOST, USER, DOMAIN, OU, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM.
 
 Same real value -> same token for the whole session (across multiple sanitize runs and files).
-Matching is **case-insensitive** for HOST/USER/DOMAIN/EMAIL (`JDOE` and `jdoe` share a token);
+Matching is **case-insensitive** for HOST/USER/DOMAIN/OU/EMAIL (`JDOE` and `jdoe` share a token);
 case-sensitive for everything else. Store the first-seen original casing in the legend.
 
 ## Detection pipeline (order matters)
@@ -84,6 +85,7 @@ Built-in key map (extend freely; keep in one table `FIELD_MAP` in sanitizer.js):
 | HOST | ComputerName, hostname, host_name, HostName, device_name, DeviceName, hostnames, asset, asset_name, name (only when parent key is `host`/`asset`/`device`), source_host, destination_host, MachineDomain is DOMAIN not HOST |
 | USER | UserName, user_name, username, user, UserPrincipal, logon_user, account, source_user, destination_user, user.name, SamAccountName, actor_user, target_user, LogonUser |
 | DOMAIN | MachineDomain, LogonDomain, domain, UserDomain, dns_domain, source_domain |
+| OU | ou, ous, organizational_unit, organizationalunit, org_unit, ou_display, active_directory_dn_display |
 | EMAIL | email, mail, user_email, email_address, sender, recipient |
 | IP | LocalAddressIP4, RemoteAddressIP4, LocalAddressIP6, RemoteAddressIP6, aip, ip, ip_address, source_ip, destination_ip, src_ip, dst_ip, external_ip, local_ip, remote_ip, public_ip, address, ipv4, ipv6, addresses |
 | MAC | MAC, mac, mac_address, PhysicalAddress, macs |
@@ -99,6 +101,21 @@ session dictionary so pass 3 can replace it anywhere.
 
 EMAIL special-case: `jdoe@corp.example` → learn `jdoe` as USER and `corp.example` as DOMAIN,
 and emit `{{EMAIL_1}}` for the full address.
+
+OU special-case: a value may be a single OU name (`ou: ["Laptops", "Accounting Dept"]`) or a
+backslash-joined OU path (`active_directory_dn_display: ["Laptops\\Computers\\Accounting Dept"]`).
+Tokenize each path segment on its own (`{{OU_1}}\\{{OU_2}}\\{{OU_3}}`) so the same OU shares a
+token in both fields and the hierarchy depth stays visible.
+
+OU names are mostly generic vocabulary (`Computers`, `Laptops`, `Finance`), so unlike every
+other learned type they are **not** swept as bare words through free text (`CONTEXT_ONLY_TYPES`).
+In free text an OU is replaced only where the context proves it is one (sweep step 1b):
+- an `OU=` component of a distinguished name, learned or not, case-insensitively
+  (`CN=WKS1,OU=Accounting Dept,OU=Computers,DC=corp,DC=local`); LDAP-escaped characters
+  (`OU=Sales\\, EMEA`) stay inside the value
+- a backslash-joined path made entirely of already-learned OUs (`Laptops\\Computers\\Finance`)
+
+The leak check applies the same rule: a bare `Computers` in a sentence is never reported.
 
 PATH special-case: do not tokenize the whole path. Replace only the user segment:
 `C:\Users\jdoe\Desktop\x.exe` → `C:\Users\{{USER_1}}\Desktop\x.exe`;
@@ -118,9 +135,10 @@ dictionary pass** so a whole email/URL becomes a single token instead of being f
 previously-learned user/domain/host substrings:
 0a. EMAIL regex (learn user + domain; emit `{{EMAIL_N}}`)
 0b. URL regex (learn host; emit `{{URL_N}}`)
-1. Dictionary replacement: all learned values, sorted by length descending, case-insensitive
-   for HOST/USER/DOMAIN/EMAIL, with `\b`-style boundaries that treat `\`, `/`, `@`, `.`, `:`, quotes
+1. Dictionary replacement: all learned values except context-only types (OU), sorted by length
+   descending, case-insensitive for HOST/USER/DOMAIN/EMAIL, with `\b`-style boundaries that treat `\`, `/`, `@`, `.`, `:`, quotes
    and whitespace as boundaries (so `jdoe` in `CORP\jdoe` matches, but `jdoe` in `jdoeadmin` does not).
+1b. OU contexts: `OU=` DN components and backslash paths of learned OUs (see the OU special-case)
 2. (moved to 0a)
 3. (moved to 0b) URL regex covers `https?://`, `ftp://`; learn the host portion as HOST/DOMAIN.
 4. IPv4 (reject if any octet > 255), IPv6 (reasonable regex; avoid matching MACs or timestamps)

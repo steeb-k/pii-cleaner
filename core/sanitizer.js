@@ -18,15 +18,29 @@
   // Constants
   // ---------------------------------------------------------------------
 
-  var TYPES = ['HOST', 'USER', 'DOMAIN', 'EMAIL', 'IP', 'MAC', 'SID', 'ID', 'PATH', 'URL', 'PHONE', 'CUSTOM'];
+  var TYPES = ['HOST', 'USER', 'DOMAIN', 'OU', 'EMAIL', 'IP', 'MAC', 'SID', 'ID', 'PATH', 'URL', 'PHONE', 'CUSTOM'];
 
-  var CASE_INSENSITIVE_TYPES = new Set(['HOST', 'USER', 'DOMAIN', 'EMAIL']);
+  // Active Directory names (hosts, users, domains, OUs) are case-insensitive.
+  var CASE_INSENSITIVE_TYPES = new Set(['HOST', 'USER', 'DOMAIN', 'OU', 'EMAIL']);
+
+  // OU names are mostly generic vocabulary ("Computers", "Laptops", "Finance"), so
+  // unlike hosts and users they are NOT replaced wherever they appear. Outside their
+  // own fields they are replaced only where the surrounding text proves they are OUs:
+  // an `OU=` component of a distinguished name, or a backslash-joined path made
+  // entirely of already-learned OUs. The leak check applies the same rule.
+  var CONTEXT_ONLY_TYPES = new Set(['OU']);
+  // `OU=<name>` inside a DN; the value runs to the next `,` / `;` / `+` or line end,
+  // tolerating LDAP-escaped characters ("OU=Sales\, EMEA").
+  var DN_OU_RE = /(?<![\p{L}\p{N}_])OU=((?:\\.|[^,;+\r\n])*?)(?=[ \t]*(?:[,;+]|$))/gimu;
 
   // Built-in key map. Keys are lower-cased leaf key names. Extend freely.
   var FIELD_MAP = {
     HOST: ['computername', 'hostname', 'host_name', 'device_name', 'hostnames', 'asset', 'asset_name', 'source_host', 'destination_host'],
     USER: ['username', 'user_name', 'user', 'userprincipal', 'logon_user', 'account', 'source_user', 'destination_user', 'samaccountname', 'actor_user', 'target_user', 'logonuser'],
     DOMAIN: ['machinedomain', 'logondomain', 'domain', 'userdomain', 'dns_domain', 'source_domain'],
+    // Organizational units. CrowdStrike hosts carry `ou` (one OU per element) and
+    // `active_directory_dn_display` (backslash-joined OU paths, "Laptops\\Computers\\Finance").
+    OU: ['ou', 'ous', 'organizational_unit', 'organizationalunit', 'org_unit', 'ou_display', 'active_directory_dn_display'],
     EMAIL: ['email', 'mail', 'user_email', 'email_address', 'sender', 'recipient'],
     IP: ['localaddressip4', 'remoteaddressip4', 'localaddressip6', 'remoteaddressip6', 'aip', 'ip', 'ip_address',
       'source_ip', 'destination_ip', 'src_ip', 'dst_ip', 'external_ip', 'local_ip', 'remote_ip', 'public_ip',
@@ -203,6 +217,7 @@
       state._byKey.set(key, entry);
       state._byToken.set(token, entry);
       state._sorted = null;
+      state._ouPathRe = null;
     }
     return entry;
   }
@@ -253,6 +268,58 @@
   function emitUrl(urlStr, state, statsAcc) {
     learnUrlHost(urlStr, state);
     return emitToken(state, 'URL', urlStr, statsAcc);
+  }
+
+  // OU field values are either a single OU name ("Accounting Dept") or a backslash-
+  // joined OU path ("Laptops\\Computers\\Accounting Dept", single or JSON-escaped
+  // double backslashes). Each path segment becomes its own {{OU_N}} token, so the same
+  // OU shares a token whether it appears alone (`ou`) or inside a path
+  // (`active_directory_dn_display`), and the hierarchy depth stays visible.
+  function tokenizeOuPath(value, state, statsAcc) {
+    return value.replace(/[^\\]+/g, function (segment) {
+      var m = /^(\s*)(.*?)(\s*)$/.exec(segment);
+      var name = m[2];
+      if (!name || isTokenString(name)) return segment;
+      return m[1] + emitToken(state, 'OU', name, statsAcc) + m[3];
+    });
+  }
+
+  // Matches two or more learned OU names joined by backslashes (1-2x escaped), e.g.
+  // "Laptops\\Computers\\Accounting Dept" quoted in free text. Null until two OUs are known.
+  function ouPathRegex(state) {
+    if (state._ouPathRe === undefined || state._ouPathRe === null) {
+      var names = [];
+      state._byKey.forEach(function (e) {
+        if (e.type === 'OU' && e.original && !isTokenString(String(e.original))) names.push(String(e.original));
+      });
+      if (names.length < 2) {
+        state._ouPathRe = false;
+      } else {
+        names.sort(function (a, b) { return b.length - a.length; });
+        var alt = '(?:' + names.map(escapeRegex).join('|') + ')';
+        state._ouPathRe = new RegExp('(?<!' + WORD_CHAR + ')' + alt + '(?:\\\\{1,2}' + alt + ')+(?!' + WORD_CHAR + ')', 'giu');
+      }
+    }
+    if (state._ouPathRe) state._ouPathRe.lastIndex = 0;
+    return state._ouPathRe || null;
+  }
+
+  // Free-text OU replacement, restricted to OU contexts (see CONTEXT_ONLY_TYPES).
+  function sweepOuContexts(str, state, statsAcc) {
+    var s = mapOutsideTokens(str, function (chunk) {
+      return chunk.replace(DN_OU_RE, function (m, val) {
+        var name = val.trim();
+        if (!name || isTokenString(name)) return m;
+        return m.slice(0, 3) + val.replace(name, emitToken(state, 'OU', name, statsAcc));
+      });
+    });
+    var re = ouPathRegex(state);
+    if (re && re.test(s)) {
+      s = mapOutsideTokens(s, function (chunk) {
+        return chunk.replace(ouPathRegex(state), function (m) { return tokenizeOuPath(m, state, statsAcc); });
+      });
+    }
+    return s;
   }
 
   // USER field values like CORP\jdoe or jdoe@corp.example: also learn the bare
@@ -314,6 +381,9 @@
     }
     if (type === 'URL') {
       return emitUrl(value, state, statsAcc);
+    }
+    if (type === 'OU') {
+      return tokenizeOuPath(value, state, statsAcc);
     }
     if (type === 'USER') learnUserParts(value, state);
     return emitToken(state, type, value, statsAcc);
@@ -391,7 +461,7 @@
     var lc = str.toLowerCase();
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i];
-      if (!enabled[entry.type]) continue;
+      if (!enabled[entry.type] || CONTEXT_ONLY_TYPES.has(entry.type)) continue;
       if (lc.indexOf(entryLc(entry)) === -1) continue;
       var re = entryRegex(entry);
       if (!re.test(result)) continue;
@@ -448,6 +518,9 @@
 
     // 1. dictionary replacement (all learned values so far, longest first)
     s = dictionaryReplace(s, state, enabled, statsAcc);
+
+    // 1b. OU contexts only: `OU=` DN components and backslash paths of learned OUs.
+    if (enabled.OU) s = sweepOuContexts(s, state, statsAcc);
 
     // 4. IPv6 (first, so embedded-IPv4 forms like ::ffff:10.0.0.1 stay one token) / IPv4
     if (enabled.IP) {
@@ -571,11 +644,16 @@
 
         // any learned dictionary value still present verbatim
         state._byKey.forEach(function (entry) {
-          if (!enabled[entry.type] || !entry.original) return;
+          if (!enabled[entry.type] || !entry.original || CONTEXT_ONLY_TYPES.has(entry.type)) return;
           if (lcText.indexOf(entryLc(entry)) === -1 || isTokenString(String(entry.original))) return;
           scanRe(entryRegex(entry), chunk, offset, outputText, entry.type, 0, null);
         });
 
+        if (enabled.OU) {
+          scanRe(DN_OU_RE, chunk, offset, outputText, 'OU', 1, function (v) { return v.trim().length > 0; });
+          var ouRe = ouPathRegex(state);
+          if (ouRe) scanRe(ouRe, chunk, offset, outputText, 'OU', 0, null);
+        }
         if (enabled.EMAIL) scanRe(EMAIL_RE, chunk, offset, outputText, 'EMAIL', 0, null);
         if (enabled.URL) scanRe(URL_RE, chunk, offset, outputText, 'URL', 0, null);
         if (enabled.IP) {
@@ -717,6 +795,7 @@
       _byToken: new Map(),
       _reservedTokens: new Set(),
       _sorted: null,
+      _ouPathRe: null,
       counters: {},
       customListValues: { HOST: [], USER: [], DOMAIN: [], CUSTOM: [] }
     };
@@ -775,6 +854,7 @@
           state._byKey.set(key, entry);
           state._byToken.set(e.token, entry);
           state._sorted = null;
+          state._ouPathRe = null;
           var n = parseInt(tm[2], 10);
           if (n > (state.counters[e.type] || 0)) state.counters[e.type] = n;
           imported++;
@@ -881,6 +961,7 @@
         state._byToken.clear();
         state._reservedTokens.clear();
         state._sorted = null;
+        state._ouPathRe = null;
         state.counters = {};
         state.customListValues = { HOST: [], USER: [], DOMAIN: [], CUSTOM: [] };
       }

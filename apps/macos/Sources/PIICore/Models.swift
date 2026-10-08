@@ -1,7 +1,7 @@
 import Foundation
 
 public enum PIIType: String, CaseIterable, Codable {
-    case HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
+    case HOST, USER, DOMAIN, OU, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
 }
 
 public struct Leak: Codable, Equatable {

@@ -42,7 +42,7 @@ PIISanitizer = {
   createSession(options?): Session,
   detectFormat(text: string): 'json' | 'array' | 'ndjson' | 'text',
   analyzeInput(text: string): { format, records?, warning? },
-  TYPES: string[],        // ['HOST','USER','DOMAIN','EMAIL','IP','MAC','SID','ID','PATH','URL','PHONE','CUSTOM']
+  TYPES: string[],        // ['HOST','USER','DOMAIN','OU','EMAIL','IP','MAC','SID','ID','PATH','URL','PHONE','CUSTOM']
   FIELD_MAP: Record<string, string[]>,  // type -> lower-cased leaf JSON key names it recognizes
 }
 ```
@@ -135,7 +135,7 @@ calling `createSession()` again, except you keep the same object reference.
 `{{TYPE_N}}`, `N` starting at 1 per type, per session. `TYPES`:
 
 ```
-HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
+HOST, USER, DOMAIN, OU, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
 ```
 
 - `IP` covers both IPv4 and IPv6.

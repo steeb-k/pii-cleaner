@@ -42,7 +42,7 @@ def main():
 
     host = "127.0.0.1"
     with socketserver.TCPServer((host, port), handler) as httpd:
-        print("PII Cleaner serving at http://%s:%d/apps/web/ (local only, no network access)" % (host, port))
+        print("Obfuscate serving at http://%s:%d/apps/web/ (local only, no network access)" % (host, port))
         print("Press Ctrl+C to stop.")
         try:
             httpd.serve_forever()

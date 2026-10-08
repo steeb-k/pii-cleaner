@@ -1,4 +1,4 @@
-/* app.js - DOM wiring for PII Cleaner. No network calls, no storage. */
+/* app.js - DOM wiring for Obfuscate (web). No network calls, no storage. */
 (function () {
   'use strict';
 
@@ -64,7 +64,7 @@
 
   // ---- category toggles ----
   var TYPE_LABELS = {
-    HOST: 'Hostnames', USER: 'Usernames', DOMAIN: 'Domains', EMAIL: 'Emails',
+    HOST: 'Hostnames', USER: 'Usernames', DOMAIN: 'Domains', OU: 'Org units', EMAIL: 'Emails',
     IP: 'IP addresses', MAC: 'MAC addresses', SID: 'SIDs', ID: 'IDs/GUIDs',
     PATH: 'User paths', URL: 'URLs', PHONE: 'Phone numbers', CUSTOM: 'Custom lists'
   };

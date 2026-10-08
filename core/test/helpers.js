@@ -22,7 +22,7 @@ function run(text, opts, session) {
 
 function tokenFor(session, type, original) {
   const lc = String(original).toLowerCase();
-  const ci = ['HOST', 'USER', 'DOMAIN', 'EMAIL'].includes(type);
+  const ci = ['HOST', 'USER', 'DOMAIN', 'OU', 'EMAIL'].includes(type);
   const e = session.exportLegend().entries.find(
     (x) => x.type === type && (ci ? String(x.original).toLowerCase() === lc : x.original === original)
   );

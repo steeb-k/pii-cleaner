@@ -325,12 +325,13 @@ describe('category toggles', () => {
     FilePath: 'C:\\Users\\pathuser\\notes.txt',
     url: 'https://portal.tgl-site.io/login',
     phone: '+14155550199',
+    ou: 'Research Lab',
     note: 'Project-Bluebird kickoff'
   };
   const RAW = {
     HOST: 'WKS-TGL-01', USER: 'tgluser', DOMAIN: 'tgl-domain.lan', EMAIL: 'mailbox@', IP: '10.77.0.9',
     MAC: '0A:1B:2C:3D:4E:5F', SID: 'S-1-5-21-7-7-7-500', ID: '0123456789abcdef0123456789abcdef',
-    PATH: 'pathuser', URL: 'https://', PHONE: '+14155550199', CUSTOM: 'Project-Bluebird'
+    PATH: 'pathuser', URL: 'https://', PHONE: '+14155550199', OU: 'Research Lab', CUSTOM: 'Project-Bluebird'
   };
   function sanitizeWith(disabled) {
     const s = newSession();
@@ -783,5 +784,115 @@ describe('adversarial inputs', () => {
     s.clear();
     assert.equal(s.exportLegend().entries.length, 0);
     assert.equal(s.sanitize('WKS-C 10.0.0.9').output, 'WKS-C {{IP_1}}');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OU: organizational units (`ou`, `active_directory_dn_display`)
+// ---------------------------------------------------------------------------
+describe('OU fields', () => {
+  const HOST_RECORD = {
+    hostname: 'WKS-FIN-042',
+    active_directory_dn_display: ['Laptops', 'Laptops\\Computers', 'Laptops\\Computers\\Accounting Dept'],
+    ou: ['Laptops', 'Computers', 'Accounting Dept']
+  };
+
+  test('each OU gets its own token; path segments reuse the same tokens as `ou`', () => {
+    const { session, result } = run(JSON.stringify(HOST_RECORD));
+    const out = JSON.parse(result.output);
+    const lap = tokenFor(session, 'OU', 'Laptops');
+    const comp = tokenFor(session, 'OU', 'Computers');
+    const acct = tokenFor(session, 'OU', 'Accounting Dept');
+    assert.ok(lap && comp && acct, 'all three OUs learned');
+    assert.deepEqual(out.ou, [lap, comp, acct]);
+    assert.deepEqual(out.active_directory_dn_display, [lap, lap + '\\' + comp, lap + '\\' + comp + '\\' + acct]);
+    for (const v of ['Laptops', 'Computers', 'Accounting Dept']) assert.ok(!result.output.includes(v), v + ' leaked');
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('single-string value and JSON-escaped double backslashes', () => {
+    const { session, result } = run('{"ou":"Accounting Dept","active_directory_dn_display":"Laptops\\\\Accounting Dept"}');
+    const out = JSON.parse(result.output);
+    const acct = tokenFor(session, 'OU', 'Accounting Dept');
+    assert.equal(out.ou, acct);
+    // the JSON text held `\\`, i.e. one real backslash, which is preserved
+    assert.equal(out.active_directory_dn_display, tokenFor(session, 'OU', 'Laptops') + '\\' + acct);
+  });
+
+  test('OU names are NOT replaced as bare words in free text (generic vocabulary)', () => {
+    const rec = Object.assign({}, HOST_RECORD, { detail: 'All Computers in Laptops were rebooted by the Accounting Dept.' });
+    const { result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    assert.equal(out.detail, rec.detail);
+    assert.equal(result.leaks.length, 0, 'bare words are not leaks either');
+  });
+
+  test('`OU=` components of a DN in free text are replaced, case-insensitively, learned or not', () => {
+    const rec = Object.assign({}, HOST_RECORD, {
+      detail: 'object at CN=WKS-FIN-042,OU=accounting dept,OU=Computers,OU=Laptops,DC=corp,DC=local',
+      other: 'moved: ou=Field Sales\\, EMEA; OU=Servers'
+    });
+    const { session, result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    const T = (n) => tokenFor(session, 'OU', n);
+    assert.equal(out.detail, 'object at CN=' + tokenFor(session, 'HOST', 'WKS-FIN-042') + ',OU=' + T('Accounting Dept') +
+      ',OU=' + T('Computers') + ',OU=' + T('Laptops') + ',DC=corp,DC=local');
+    assert.equal(out.other, 'moved: ou=' + T('Field Sales\\, EMEA') + '; OU=' + T('Servers'));
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('backslash paths made of learned OUs are replaced in free text; mixed paths are not', () => {
+    const rec = Object.assign({}, HOST_RECORD, {
+      a: 'seen under Laptops\\Computers\\Accounting Dept today',
+      b: 'C:\\Laptops\\Drivers is a folder, not an OU'
+    });
+    const { session, result } = run(JSON.stringify(rec));
+    const out = JSON.parse(result.output);
+    const T = (n) => tokenFor(session, 'OU', n);
+    assert.equal(out.a, 'seen under ' + T('Laptops') + '\\' + T('Computers') + '\\' + T('Accounting Dept') + ' today');
+    assert.equal(out.b, rec.b);
+  });
+
+  test('raw text mode: DN components per line, no bare-word replacement', () => {
+    const { result } = run('host moved to OU=Workstations\nAll Workstations patched\nCN=x,OU=HR,DC=corp,DC=local');
+    assert.equal(result.format, 'text');
+    assert.equal(result.output, 'host moved to OU={{OU_1}}\nAll Workstations patched\nCN=x,OU={{OU_2}},DC=corp,DC=local');
+    assert.equal(result.leaks.length, 0);
+  });
+
+  test('leak check flags an OU only in an OU context', () => {
+    const s = newSession();
+    s.sanitize(JSON.stringify(HOST_RECORD));
+    // Simulate output that still carries OU names (OU type disabled, then re-enabled for the check).
+    const r = s.sanitize(JSON.stringify({ x: 'Laptops are fine. CN=a,OU=Laptops,DC=x. Also Laptops\\Computers.' }), { enabled: { OU: true } });
+    assert.equal(r.leaks.length, 0, 'everything in context was replaced, nothing else flagged');
+    const r2 = s.sanitize('plain Computers mention', { enabled: { OU: false } });
+    assert.equal(r2.leaks.length, 0);
+  });
+
+  test('OU toggle off leaves both fields untouched', () => {
+    const { result } = run(JSON.stringify(HOST_RECORD), { enabled: { OU: false } });
+    const out = JSON.parse(result.output);
+    assert.deepEqual(out.ou, HOST_RECORD.ou);
+    assert.deepEqual(out.active_directory_dn_display, HOST_RECORD.active_directory_dn_display);
+    assert.ok(!result.output.includes('{{OU_'));
+  });
+
+  test('sanitizing already-sanitized OU output is a no-op; empty segments survive', () => {
+    const s = newSession();
+    const first = s.sanitize(JSON.stringify(HOST_RECORD)).output;
+    assert.equal(s.sanitize(first).output, first);
+    const { result } = run('{"ou":["", "  ", "Laptops\\\\"]}');
+    const out = JSON.parse(result.output);
+    assert.equal(out.ou[0], '');
+    assert.equal(out.ou[1], '  ');
+    assert.match(out.ou[2], /^\{\{OU_1\}\}\\$/);
+  });
+
+  test('legend lists OU entries with their original casing and counts', () => {
+    const { session } = run(JSON.stringify(HOST_RECORD));
+    const e = session.exportLegend().entries.find((x) => x.type === 'OU' && x.original === 'Accounting Dept');
+    assert.ok(e);
+    assert.equal(e.count, 2);
   });
 });

@@ -253,7 +253,7 @@ describe('browser (headless chromium)', { skip: SKIP }, () => {
 
       assert.deepEqual(o.missingIds, [], 'ids referenced in app.js missing from DOM');
       assert.match(o.sanitizeText, /Sanitize/);
-      assert.equal(o.toggleCount, 12);
+      assert.equal(o.toggleCount, require(path.join(ROOT, 'core', 'sanitizer.js')).TYPES.length);
       assert.ok(o.allChecked, 'all toggles default ON');
       assert.equal(o.csp, 'CSP active');
       assert.equal(o.formatLabel, 'format: json');
