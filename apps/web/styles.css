@@ -36,9 +36,13 @@
 
 * { box-sizing: border-box; }
 
-/* Header / main / footer stack; main takes whatever height is left so the
-   output panel can grow to the bottom of the browser window. */
+/* Header / main / footer stack. On desktop widths the whole page fits the
+   browser window with no page scroll: main takes exactly the height left over,
+   the input textarea and the output panel flex to fill it, and the left column
+   scrolls internally only if the window is too short for the options. Narrow
+   (single-column) layouts keep normal page scrolling. */
 body {
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
@@ -46,7 +50,6 @@ body {
 html, body {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -201,7 +204,7 @@ textarea {
 }
 
 textarea.small {
-  min-height: 64px;
+  min-height: 48px;
 }
 
 .error-box {
@@ -472,7 +475,20 @@ table th {
 }
 
 .app-footer {
-  padding: 10px 20px 20px;
+  padding: 6px 20px 12px;
   color: var(--text-dim);
   font-size: 11.5px;
+}
+
+/* Fit-to-window rules: last so they win over the base min-heights above. */
+@media (min-width: 901px) {
+  html, body { height: 100%; }
+  body { min-height: 0; }
+  .layout { grid-template-rows: minmax(0, 1fr); min-height: 0; }
+  .col-input { min-height: 0; overflow-y: auto; }
+  /* grows to use spare height, never shrinks below its own content */
+  .panel-input { display: flex; flex-direction: column; flex: 1 1 auto; }
+  #input-text { flex: 1; min-height: 120px; }
+  .col-output, .panel-output { min-height: 0; }
+  #output-text { min-height: 120px; }
 }
