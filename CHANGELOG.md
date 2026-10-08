@@ -3,7 +3,7 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
-## [Unreleased]
+## [0.9.3]
 
 - Exempt subtrees: everything under `analysis_hour_destinations`
   (outgoing-traffic destinations) is left untouched, at any depth, including
