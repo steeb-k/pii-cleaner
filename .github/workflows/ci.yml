@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Core sanitizer unit tests.
+      - run: node --test core/test/
+
+      # Web app's static/no-network + serve.py checks only.
+      # browser.test.js (headless Chromium) needs a chromium binary and is
+      # intentionally NOT run in CI; see apps/web/test/README.md. Run it
+      # locally before release.
+      - run: node --test apps/web/test/nonetwork.test.js
+
+      # CLI host tests.
+      - run: node --test apps/cli/test/
+
+      # Build the deployable static web bundle and sanity-check its output.
+      - run: bash scripts/build-web.sh
+      - run: test -f dist/web/sanitizer.js

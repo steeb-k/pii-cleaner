@@ -5,8 +5,9 @@ Minimal local-only static file server for the PII Cleaner app.
 - stdlib only (http.server)
 - binds 127.0.0.1 ONLY (never 0.0.0.0), so nothing outside this machine can reach it
 - sends Cache-Control: no-store on every response
-- serves the directory this script lives in, regardless of current working directory
-- usage: python3 serve.py [port]   (default port: 8080)
+- serves the repository root (two levels up from this script), regardless of current
+  working directory, so the app's relative reference to ../../core/sanitizer.js resolves
+- usage: python3 apps/web/serve.py [port]   (default port: 8080)
 """
 import http.server
 import os
@@ -33,14 +34,15 @@ def main():
             print("Invalid port %r, using default 8080" % sys.argv[1], file=sys.stderr)
             port = 8080
 
-    directory = os.path.dirname(os.path.abspath(__file__))
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    directory = os.path.dirname(os.path.dirname(script_dir))  # repo root, two levels up
     os.chdir(directory)
 
     handler = lambda *args, **kwargs: NoStoreHandler(*args, directory=directory, **kwargs)
 
     host = "127.0.0.1"
     with socketserver.TCPServer((host, port), handler) as httpd:
-        print("PII Cleaner serving at http://%s:%d/ (local only, no network access)" % (host, port))
+        print("PII Cleaner serving at http://%s:%d/apps/web/ (local only, no network access)" % (host, port))
         print("Press Ctrl+C to stop.")
         try:
             httpd.serve_forever()

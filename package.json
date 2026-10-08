@@ -1,0 +1,13 @@
+{
+  "name": "pii-cleaner",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test core/test/ apps/web/test/ apps/cli/test/",
+    "test:core": "node --test core/test/",
+    "test:web": "node --test apps/web/test/",
+    "test:cli": "node --test apps/cli/test/",
+    "build:web": "bash scripts/build-web.sh",
+    "serve": "python3 apps/web/serve.py"
+  }
+}

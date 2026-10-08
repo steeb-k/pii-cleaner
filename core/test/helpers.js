@@ -3,8 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const ROOT = path.resolve(__dirname, '..');
-const S = require(path.join(ROOT, 'sanitizer.js'));
+const ROOT = path.resolve(__dirname, '../..');
+const S = require(path.join(ROOT, 'core', 'sanitizer.js'));
 
 function readSample(name) {
   return fs.readFileSync(path.join(ROOT, 'samples', name), 'utf8');

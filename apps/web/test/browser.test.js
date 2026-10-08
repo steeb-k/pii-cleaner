@@ -10,14 +10,14 @@ const os = require('node:os');
 const net = require('node:net');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { ROOT, readSample } = require('./helpers.js');
+const { ROOT, WEB, readSample } = require('./helpers.js');
 
 const CHROMIUM = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => fs.existsSync(p));
 const HAS_WS = typeof WebSocket === 'function';
 const SKIP = !CHROMIUM ? 'no chromium binary found' : (!HAS_WS ? 'no global WebSocket in this Node' : false);
 
 // ids referenced by app.js (computed independently of the browser)
-const APP_IDS = [...fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8').matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]);
+const APP_IDS = [...fs.readFileSync(path.join(WEB, 'app.js'), 'utf8').matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]);
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -224,7 +224,7 @@ describe('browser (headless chromium)', { skip: SKIP }, () => {
   before(async () => {
     chrome = await launchChromium(path.join(tmp, 'profile'));
     const port = await freePort();
-    server = spawn('python3', [path.join(ROOT, 'serve.py'), String(port)], { stdio: 'ignore' });
+    server = spawn('python3', [path.join(WEB, 'serve.py'), String(port)], { stdio: 'ignore' });
     httpOrigin = 'http://127.0.0.1:' + port;
     const deadline = Date.now() + 10000;
     for (;;) {
@@ -245,7 +245,7 @@ describe('browser (headless chromium)', { skip: SKIP }, () => {
 
   for (const mode of ['file', 'http']) {
     test(mode + ': renders, works end-to-end, no console errors, no foreign requests', async () => {
-      const url = mode === 'file' ? 'file://' + path.join(ROOT, 'index.html') : httpOrigin + '/index.html';
+      const url = mode === 'file' ? 'file://' + path.join(WEB, 'index.html') : httpOrigin + '/apps/web/index.html';
       const page = await openPage(chrome.cdp, url);
       const o = await page.evaluate(DRIVE(sample, APP_IDS));
       await sleep(300);
@@ -296,7 +296,7 @@ describe('browser (headless chromium)', { skip: SKIP }, () => {
   }
 
   test('CSP actively blocks an injected fetch/image to a remote host (file:// and http)', async () => {
-    for (const url of ['file://' + path.join(ROOT, 'index.html'), httpOrigin + '/index.html']) {
+    for (const url of ['file://' + path.join(WEB, 'index.html'), httpOrigin + '/apps/web/index.html']) {
       const page = await openPage(chrome.cdp, url);
       const r = await page.evaluate(`(async () => {
         const v = [];

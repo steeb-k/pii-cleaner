@@ -1,210 +1,161 @@
 # PII Cleaner
 
-A local-only, single-page web app that sanitizes CrowdStrike Falcon and
-Rapid7 (InsightIDR / InsightVM) JSON logs by replacing PII with typed,
-numbered tokens (`{{HOST_1}}`, `{{USER_2}}`, ...), and produces a legend
-so the mapping can be kept for later reference (there is no "reverse"
-mode in v1 &mdash; see Limitations).
+A local-only PII sanitizer for CrowdStrike Falcon and Rapid7 (InsightIDR /
+InsightVM) logs: it replaces hostnames, usernames, domains, emails, IPs,
+and more with typed, numbered tokens (`{{HOST_1}}`, `{{USER_2}}`, ...),
+and keeps a legend so the mapping can be reused across files and sessions.
+Everything runs on your machine; nothing is ever uploaded anywhere.
 
-Everything runs in your browser tab. Nothing is uploaded, nothing is
-persisted automatically, and there is no server-side processing.
+## Architecture: one core, several host apps
 
-## What it does
+```
+core/        pure, dependency-free sanitization logic (the product)
+apps/
+  web/       single-page browser UI               (shipping)
+  cli/       tiny Node command-line tool           (shipping)
+  macos/     SwiftUI menu-bar app, via JavaScriptCore (planned, README only)
+```
 
-- Paste JSON, NDJSON, or raw text, or pick a local file.
-- Auto-detects the input shape: single JSON object, JSON array, NDJSON
-  (one object per line), or falls back to raw text.
-- Recognizes CrowdStrike/Rapid7-style field names (`ComputerName`,
-  `UserName`, `MachineDomain`, `LocalAddressIP4`, `aid`/`cid`,
-  `hostName`/`hostNames`, `source_ip`, `asset_id`, etc.) and tokenizes
-  their values.
-- Sweeps every string value (and raw text) with a further set of
-  regexes to catch PII that shows up in free text (command lines,
-  descriptions, URLs) even outside a recognized field: emails, URLs,
-  IPv4/IPv6, MAC addresses, Windows SIDs, GUID/UUIDs, Windows/POSIX
-  home-directory usernames, allow-listed FQDNs, and phone numbers.
-- Never touches hashes (SHA256/MD5), timestamps, numbers, booleans,
-  JSON keys, ports, or process names &mdash; those are left exactly as-is.
-- The same real-world value always maps to the same token for the
-  whole session, across multiple files/pastes, so you can sanitize a
-  whole investigation's worth of logs and keep cross-references intact.
-- Builds a legend (token &rarr; original value) you can export as JSON
-  or CSV, and re-import later so tokens stay stable across sessions.
-- Runs a "leak check" after every sanitize pass: it re-scans the
-  *output* with the same detectors to catch anything that slipped
-  through, plus any custom-list value still present verbatim.
+All the actual PII-detection behavior &mdash; field recognition, the regex
+sweep, the legend, the leak check &mdash; lives in **`core/sanitizer.js`**
+and nowhere else. It's plain ES2020 with zero npm dependencies and no DOM,
+Node, or browser-specific globals (no `window`, `document`, `require`,
+`process`, `Buffer`, network or storage calls). That's a deliberate design
+choice, not an accident: it's what lets the *same, unmodified* file run
+as-is in three completely different JS hosts:
 
-## How to run
+- **Node** &mdash; `require('./core/sanitizer.js')` picks it up via
+  `module.exports`.
+- **Browser** &mdash; a `<script>` tag defines `window.PIISanitizer`.
+- **JavaScriptCore** (used by the planned macOS app) &mdash; has neither
+  `module` nor `window`, so the core falls back through `globalThis` (and
+  then `self`/`this`) to attach itself, giving `globalThis.PIISanitizer`
+  with zero shimming.
 
-Either works equally well; both are exercised by the test suite.
+Each host app in `apps/` is just UI/plumbing around that one core: it
+collects input from wherever is natural for that platform (a textarea and
+file picker, stdin/argv, the clipboard and drag-and-drop), calls
+`createSession()` / `session.sanitize()`, and presents the result. None of
+them re-implement or fork the detection logic, so a fix or new detector in
+`core/` benefits every host app at once, and there's exactly one place to
+audit for correctness.
 
-### Option A: plain `file://`
+See [`core/README.md`](core/README.md) for the full API contract, and
+[`docs/SPEC.md`](docs/SPEC.md) for the detailed design spec (detection
+pipeline order, field maps, token rules, non-goals).
 
-Just open `index.html` in your browser (double-click it, or
-`File > Open`). No server, no build step.
+## Repo layout
 
-### Option B: local HTTP server
+| Path | What |
+|---|---|
+| `core/` | Shared sanitizer (`sanitizer.js`), its own unit tests, its API README |
+| `apps/web/` | Browser UI: `index.html`, `app.js`, `styles.css`, `serve.py`, tests |
+| `apps/cli/` | `pii-clean.js` Node CLI, tests |
+| `apps/macos/` | Plan for a SwiftUI + JavaScriptCore menu-bar app (no code yet) |
+| `samples/` | Synthetic CrowdStrike/Rapid7 fixtures, fictional values only |
+| `docs/SPEC.md` | Design spec: detection pipeline, field maps, token/case rules |
+| `scripts/build-web.sh` | Builds `dist/web/`, a flat deployable copy of the web app |
+| `.github/workflows/ci.yml` | Runs the test suite (minus headless-Chromium tests) on push/PR |
+
+## Quick start
+
+### Web app
 
 ```sh
-python3 serve.py            # http://127.0.0.1:8080/
-python3 serve.py 8099       # custom port
+python3 apps/web/serve.py        # -> http://127.0.0.1:8080/apps/web/
+# or just open apps/web/index.html directly (file://, no server needed)
 ```
 
-`serve.py` is stdlib-only (`http.server`), binds strictly to
-`127.0.0.1` (never `0.0.0.0`, so nothing outside this machine can ever
-reach it), serves the directory the script itself lives in (regardless
-of your current working directory), sends `Cache-Control: no-store` on
-every response, and prints the URL to connect to. `Ctrl+C` stops it.
-
-## No-network guarantees, and how to verify them yourself
-
-The app makes zero network requests, by construction:
-
-- `index.html` carries a strict CSP meta tag:
-  `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'`.
-  This blocks any fetch/XHR/WebSocket/image/font/frame load to
-  anywhere other than the page's own origin, even if a bug or a
-  pasted log line somehow tried to trigger one.
-- There are no `<script src="https://...">`/CDN includes, no fonts,
-  no analytics, no service workers.
-- `sanitizer.js` and `app.js` contain no `fetch(`, `XMLHttpRequest`,
-  `WebSocket`, or URL literals.
-- No `localStorage`, `sessionStorage`, `IndexedDB`, or cookies are
-  used anywhere; the dictionary/legend/inputs live only in JS memory
-  for the life of the tab and are gone on reload.
-
-To verify this yourself:
-
-1. **DevTools Network tab.** Open the app (either `file://` or via
-   `serve.py`), open DevTools &rarr; Network, clear it, then paste a log,
-   toggle categories, click Sanitize, copy/download output, export/
-   import a legend, and clear the session. With `serve.py` you should
-   see only the handful of local requests for `index.html`,
-   `styles.css`, `sanitizer.js`, `app.js` (and any sample file you
-   open) &mdash; nothing else, ever. With `file://` the Network tab will
-   show nothing at all, since there's no HTTP layer in play.
-2. **Static grep check.** From the project directory:
-   ```sh
-   grep -nE "https?://|fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB" *.js *.html
-   ```
-   This should return nothing (or only comments/the CSP meta line).
-
-## Token format
-
-`{{TYPE_N}}`, with `N` starting at 1 per type, per session. Types:
-
-```
-HOST, USER, DOMAIN, EMAIL, IP, MAC, SID, ID, PATH, URL, PHONE, CUSTOM
-```
-
-- `IP` covers both IPv4 and IPv6.
-- `ID` covers GUID/UUIDs, CrowdStrike `aid`/`cid`, Rapid7 asset IDs,
-  and serial numbers.
-- `PATH` is a reserved category for the "user path segment" detector
-  (see below) &mdash; whole file paths are never wrapped in a single
-  `{{PATH_N}}` token; only the embedded username is replaced.
-- Matching is **case-insensitive** for HOST/USER/DOMAIN/EMAIL (`JDOE`
-  and `jdoe` share a token); case-sensitive for everything else. The
-  legend stores the first-seen original casing.
-
-## Legend workflow
-
-- Every sanitize run updates the in-memory legend (`token, type,
-  original, count`).
-- **Export JSON** (`{version:1, created, entries:[...]}`) or
-  **Export CSV** (`token,type,original,count`) from the Legend tab.
-- **Import** a previously exported legend JSON file before sanitizing
-  new logs from the same investigation: it pre-seeds the dictionary so
-  the *same* original values get the *same* tokens again, and the
-  per-type counters resume from the highest `N` already used, so new
-  values get fresh, non-colliding tokens.
-- The Legend tab has a filter box and sortable columns.
-
-## Category toggles and custom lists
-
-All 12 categories are on by default; uncheck any you don't want
-touched. Four free-text lists let you add your own values (one per
-line) that get folded into the shared dictionary before the regex
-sweep runs, so they're replaced everywhere, including inside free
-text: Hostnames, Usernames, Domains, and "Other sensitive strings"
-(tokenized as `CUSTOM`).
-
-The Leak check tab lists anything that still looks like PII in the
-*output*; each row has an "Add to custom list & re-run" button that
-adds that exact value to the right list and re-sanitizes immediately.
-
-## Keyboard
-
-`Ctrl+Enter` / `Cmd+Enter` runs Sanitize from anywhere on the page.
-
-## Samples
-
-`samples/` has four synthetic, fictional inputs (no real hosts, users,
-or IPs) to exercise every detector:
-
-- `crowdstrike_detection.json` &mdash; a Falcon `DetectionSummaryEvent`-style
-  record.
-- `crowdstrike_ndjson.ndjson` &mdash; three NDJSON records sharing one
-  hostname, to show dedup/token-stability across records.
-- `rapid7_idr_alert.json` &mdash; a synthetic InsightIDR alert/investigation.
-- `rapid7_vm_asset.json` &mdash; a synthetic InsightVM asset (`hostName`/
-  `hostNames`, `addresses`, `osFingerprint`, `ids`).
-
-You can sanitize any of these from Node directly, e.g.:
+### CLI
 
 ```sh
-node -e "
-const s = require('./sanitizer.js');
-const sess = s.createSession();
-const r = sess.sanitize(require('fs').readFileSync('samples/crowdstrike_detection.json','utf8'));
-console.log(r.output);
-"
+echo '{"ComputerName":"WKS-1","UserName":"jdoe"}' | node apps/cli/pii-clean.js
 ```
 
-## Tests
+See [`apps/cli/README.md`](apps/cli/README.md) for flags (`--legend-in`/
+`--legend-out`, `--disable`, `--quiet`) and exit codes.
+
+### macOS app
+
+Not built yet &mdash; see [`apps/macos/README.md`](apps/macos/README.md) for
+the plan (SwiftUI menu bar, JavaScriptCore bridge, sandboxed with no
+network entitlement).
+
+## Running the tests
 
 ```sh
-node --test tests/
+npm test            # everything: core + web (static/runtime, not headless Chromium) + cli
+npm run test:core    # core/test/        - sanitizer unit tests
+npm run test:web     # apps/web/test/    - no-network statics + serve.py + headless Chromium
+npm run test:cli     # apps/cli/test/    - CLI behavior
 ```
 
-119 tests: pure-logic unit tests, static no-network checks, a live
-`serve.py` check, and a headless Chromium run (DevTools Protocol, no
-installs) that drives the UI end to end and asserts zero foreign
-requests and zero CSP violations.
+(Equivalently: `node --test core/test/ apps/web/test/ apps/cli/test/`.)
 
-## Limitations (v1, by design &mdash; see SPEC.md "Non-goals")
+`apps/web/test/browser.test.js` drives a headless Chromium instance over
+the DevTools Protocol and needs a Chromium binary (`/usr/bin/chromium` or
+similar) on `PATH`; it's skipped automatically if none is found, and is
+**not run in CI** for that reason &mdash; run it locally before a release.
+Everything else (`core/test/`, `apps/web/test/nonetwork.test.js`,
+`apps/cli/test/`) has no such dependency and is what CI runs.
 
-- No reverse mode (restoring original values from tokens).
-- No timestamp shifting; timestamps are left untouched.
-- No private/public IP distinction.
-- No server-side processing of any kind.
-- Detection is regex/field-name based, not a full NLP/NER model: a bare
-  username or hostname mentioned in free text that was never seen in a
-  recognized field, custom list, or structured pattern (email/URL/UNC
-  path/etc.) cannot be found by magic. Add it to a custom list if you
-  know about it ahead of time, or use the Leak check tab's "Add to
-  custom list & re-run" action once you spot it.
-- The `FQDN` free-text detector only tokenizes dotted hostnames whose
-  final label is in a short TLD allow-list (`com`, `net`, `org`,
-  `local`, `lan`, `corp`, `internal`, `io`, `edu`, `gov`, `mil`, `co`,
-  `uk`, `de`) to avoid false positives on version numbers and file
-  names like `svchost.exe`. A domain outside that allow-list that
-  hasn't otherwise been learned (e.g. from a mapped field) will not be
-  auto-detected in free text.
-- IPv6 detection covers full, `::`-compressed, and embedded-IPv4 forms.
-  Timestamps (`14:22:10`) and PowerShell `[Math]::Abs` are not matched.
-- Invalid JSON is still sanitized as raw text, with an inline warning
-  naming the parse error (and the line, for NDJSON).
-- Custom lists only grow within a session: removing a line from a
-  textarea does not un-learn the value until you Clear the session.
-- Boundaries are word-boundary (`\b`) style, so a learned `CORP` will
-  also match inside `CORP-WKS-01`. Very short learned values (e.g. a
-  one-letter email local part) can over-match; check the Leak and
-  Legend tabs if a token looks surprising.
-- The IP field key `address` will also tokenize a street address.
-- The CSV legend writes originals verbatim. If one starts with `=`,
-  `+`, `-` or `@`, a spreadsheet may treat it as a formula; open the
-  CSV as text or use the JSON export instead.
-- Phone-number detection is intentionally conservative (common
-  separated US formats and `+`-prefixed E.164) to avoid false
-  positives on IDs/hashes/timestamps.
+## Deploying the web app
+
+The web app's `index.html` references the core via a relative
+`../../core/sanitizer.js` path, which only resolves inside this monorepo.
+To get a flat, self-contained directory you can drop onto any static host
+(e.g. a GitHub Pages folder):
+
+```sh
+bash scripts/build-web.sh    # writes dist/web/
+# then copy dist/web/*  to your Pages folder (or any static host)
+```
+
+`dist/web/` contains `index.html`, `app.js`, `styles.css`, `sanitizer.js`,
+`README.md`, and `samples/`, with the script path rewritten so
+`sanitizer.js` sits next to `index.html`. It's `.gitignore`d; rebuild it
+whenever you deploy.
+
+## The no-network guarantee
+
+Every host app here makes zero network requests, by construction:
+
+- `core/sanitizer.js` touches nothing but its own arguments &mdash; no
+  `fetch`, `XMLHttpRequest`, `WebSocket`, storage, or URL literals.
+- The web app's `index.html` carries a strict CSP
+  (`default-src 'none'; script-src 'self'; ...; connect-src 'none'`) that
+  blocks any such attempt even if one slipped in, and `apps/web/serve.py`
+  binds to `127.0.0.1` only.
+- The CLI touches only the files you pass it (plus, with `--legend-out`,
+  the one legend file you named) and stdin/stdout/stderr.
+- The planned macOS app is specced to ship App Sandbox with no network
+  entitlement at all (see `apps/macos/README.md`).
+
+Verify it yourself at any time:
+
+```sh
+grep -rn "https\?://" core apps --include=*.js --include=*.html
+```
+
+This should return nothing but comments.
+
+## Adding a new host app
+
+Any new host just needs to load `core/sanitizer.js` for its platform (CJS
+`require`, a `<script>` tag, or `evaluateScript` for a JS engine) and use
+this ten-line contract (full detail in [`core/README.md`](core/README.md)):
+
+```js
+const PIISanitizer = require('./core/sanitizer.js'); // or window./globalThis.PIISanitizer
+const session = PIISanitizer.createSession();         // one session per batch of related input
+const result = session.sanitize(text, { enabled: { IP: false /* etc */ } });
+// result: { output, format, records, stats, leaks, warning, error }
+session.addCustom('HOST', ['known-host-1', 'known-host-2']); // optional, pre-seed a list
+const legend = session.exportLegend();                 // { version, created, entries }
+// elsewhere / later / another host app:
+otherSession.importLegend(legend);                      // same values -> same tokens
+```
+
+Add the new app under `apps/<name>/`, with its own `README.md` and, if it
+has automated tests, an `apps/<name>/test/` directory wired into the root
+`test` script in `package.json`.

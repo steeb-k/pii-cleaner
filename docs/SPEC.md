@@ -15,14 +15,42 @@ JSON logs by replacing PII with typed, numbered tokens, and produces a legend fo
 ## Files
 ```
 pii-cleaner/
-  index.html        UI (loads styles.css + sanitizer.js + app.js via relative paths)
-  styles.css
-  sanitizer.js      pure logic, no DOM access
-  app.js            DOM wiring
-  serve.py          `python3 serve.py [port]` -> http.server bound to 127.0.0.1 only, no-cache headers
+  core/
+    sanitizer.js      pure logic, no DOM access, no Node/browser-only globals
+    package.json      @pii-cleaner/core
+    README.md         API contract for host apps
+    test/
+      helpers.js
+      sanitizer.test.js
+  apps/
+    web/
+      index.html       UI (loads styles.css + ../../core/sanitizer.js + app.js via relative paths)
+      styles.css
+      app.js           DOM wiring
+      serve.py         `python3 apps/web/serve.py [port]` -> http.server bound to 127.0.0.1 only,
+                        serves the repo root, no-cache headers
+      README.md
+      test/
+        helpers.js
+        nonetwork.test.js
+        browser.test.js
+        README.md
+    cli/
+      pii-clean.js     Node CLI host (no dependencies)
+      README.md
+      test/
+        cli.test.js
+    macos/
+      README.md        plan for a SwiftUI menu-bar host embedding core via JavaScriptCore
+  samples/             synthetic CrowdStrike + Rapid7 records (fictional values only)
+  docs/
+    SPEC.md            this file
+  scripts/
+    build-web.sh       builds dist/web/, a flat deployable copy of apps/web + core/sanitizer.js
+  .github/workflows/
+    ci.yml
+  package.json         root workspace scripts
   README.md
-  samples/          synthetic CrowdStrike + Rapid7 records (fictional values only)
-  tests/            node tests (written by the test phase)
 ```
 
 ## Input handling

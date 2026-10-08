@@ -8,13 +8,14 @@ const net = require('node:net');
 const http = require('node:http');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { ROOT } = require('./helpers.js');
+const { ROOT, WEB } = require('./helpers.js');
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
-// App files only (top level), as in the SPEC acceptance grep. tests/ is excluded:
-// it legitimately talks to 127.0.0.1.
-const APP_FILES = fs.readdirSync(ROOT).filter((f) => /\.(js|html|css)$/.test(f));
+// App files whose source must never reference network/storage/dialog APIs, as in the
+// SPEC acceptance grep. Paths are relative to ROOT (the repo root). test/ directories
+// are excluded: they legitimately talk to 127.0.0.1.
+const APP_FILES = ['core/sanitizer.js', 'apps/web/app.js', 'apps/web/index.html'];
 
 function stripComments(src, file) {
   let s = src;
@@ -30,10 +31,10 @@ function stripComments(src, file) {
 
 describe('static: CSP and includes', () => {
   test('index.html carries the exact CSP meta from SPEC.md', () => {
-    const spec = read('SPEC.md');
+    const spec = read('docs/SPEC.md');
     const m = /<meta http-equiv="Content-Security-Policy" content="[^"]+">/.exec(spec);
     assert.ok(m, 'CSP meta not found in SPEC.md');
-    const html = read('index.html');
+    const html = read('apps/web/index.html');
     assert.ok(html.includes(m[0]), 'index.html must contain exactly: ' + m[0]);
     // and it must be in <head>, before any script
     const headEnd = html.indexOf('</head>');
@@ -44,7 +45,7 @@ describe('static: CSP and includes', () => {
   });
 
   test('no remote <script src> / <link href> / any remote src|href in index.html', () => {
-    const html = stripComments(read('index.html'), 'index.html');
+    const html = stripComments(read('apps/web/index.html'), 'index.html');
     assert.doesNotMatch(html, /<script[^>]+src\s*=\s*["']?\s*(https?:)?\/\//i);
     assert.doesNotMatch(html, /<link[^>]+href\s*=\s*["']?\s*(https?:)?\/\//i);
     assert.doesNotMatch(html, /\b(src|href|action|poster|data)\s*=\s*["']?\s*(https?:)?\/\//i);
@@ -52,10 +53,10 @@ describe('static: CSP and includes', () => {
   });
 
   test('index.html loads exactly styles.css, sanitizer.js, app.js via relative paths', () => {
-    const html = read('index.html');
+    const html = read('apps/web/index.html');
     const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
     const links = [...html.matchAll(/<link[^>]*href="([^"]+)"/g)].map((m) => m[1]);
-    assert.deepEqual(scripts, ['sanitizer.js', 'app.js']);
+    assert.deepEqual(scripts, ['../../core/sanitizer.js', 'app.js']);
     // styles.css + an inline data: favicon (prevents an implicit /favicon.ico request)
     assert.deepEqual(links.sort(), ['data:,', 'styles.css']);
     assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'no inline scripts (CSP script-src self would block them)');
@@ -63,7 +64,7 @@ describe('static: CSP and includes', () => {
   });
 
   test('styles.css has no remote url()/@import/fonts', () => {
-    const css = stripComments(read('styles.css'), 'styles.css');
+    const css = stripComments(read('apps/web/styles.css'), 'styles.css');
     assert.doesNotMatch(css, /@import/i);
     assert.doesNotMatch(css, /url\(\s*["']?\s*(https?:)?\/\//i);
     assert.doesNotMatch(css, /@font-face/i);
@@ -80,7 +81,7 @@ describe('static: forbidden APIs outside comments', () => {
   for (const f of APP_FILES) {
     test(f + ' contains no network/storage/dialog API usage', () => {
       let src = stripComments(read(f), f);
-      if (f === 'index.html') {
+      if (f === 'apps/web/index.html') {
         // the CSP line itself is allowed by the SPEC acceptance grep
         src = src.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '');
       }
@@ -98,21 +99,22 @@ describe('static: forbidden APIs outside comments', () => {
   });
 
   test('sanitizer.js is DOM-free and Node-loadable', () => {
-    const src = stripComments(read('sanitizer.js'), 'sanitizer.js');
+    const src = stripComments(read('core/sanitizer.js'), 'core/sanitizer.js');
     assert.doesNotMatch(src, /\bdocument\./);
     assert.match(src, /module\.exports\s*=/);
-    assert.match(src, /window\.PIISanitizer\s*=/);
+    assert.match(src, /globalThis/);
+    assert.match(src, /g\.PIISanitizer\s*=\s*PIISanitizer/);
   });
 
   test('app.js file picker uses FileReader only (no URL fetch of files)', () => {
-    const src = stripComments(read('app.js'), 'app.js');
+    const src = stripComments(read('apps/web/app.js'), 'apps/web/app.js');
     assert.match(src, /new FileReader\(\)/);
     assert.doesNotMatch(src, /\.text\(\)|\.arrayBuffer\(\)|\.stream\(\)/);
   });
 });
 
 describe('static: serve.py', () => {
-  const py = read('serve.py');
+  const py = read('apps/web/serve.py');
   test('binds 127.0.0.1 only and sends no-store', () => {
     assert.match(py, /host\s*=\s*"127\.0\.0\.1"/);
     assert.doesNotMatch(py, /0\.0\.0\.0['"]\s*,|\(\s*['"]['"]\s*,/);
@@ -173,8 +175,8 @@ describe('runtime: serve.py', () => {
 
   before(async () => {
     port = await freePort();
-    // run from a different cwd to verify it serves its own directory
-    proc = spawn('python3', [path.join(ROOT, 'serve.py'), String(port)], { cwd: os.tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] });
+    // run from a different cwd to verify it serves the repo root regardless of cwd
+    proc = spawn('python3', [path.join(WEB, 'serve.py'), String(port)], { cwd: os.tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] });
     proc.stderr.on('data', (d) => { stderr += d; });
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
@@ -188,14 +190,14 @@ describe('runtime: serve.py', () => {
     if (proc && proc.exitCode === null) proc.kill('SIGTERM');
   });
 
-  test('serves index.html with Cache-Control: no-store', async () => {
-    const r = await get('127.0.0.1', port, '/');
+  test('serves apps/web/index.html with Cache-Control: no-store', async () => {
+    const r = await get('127.0.0.1', port, '/apps/web/');
     assert.equal(r.status, 200);
     assert.equal(r.headers['cache-control'], 'no-store');
     assert.match(r.body, /Content-Security-Policy/);
   });
 
-  for (const f of ['/index.html', '/styles.css', '/sanitizer.js', '/app.js']) {
+  for (const f of ['/apps/web/index.html', '/apps/web/styles.css', '/core/sanitizer.js', '/apps/web/app.js']) {
     test('GET ' + f + ' -> 200 + no-store', async () => {
       const r = await get('127.0.0.1', port, f);
       assert.equal(r.status, 200);

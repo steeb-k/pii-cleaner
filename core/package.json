@@ -1,0 +1,9 @@
+{
+  "name": "@pii-cleaner/core",
+  "version": "1.0.0",
+  "main": "sanitizer.js",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

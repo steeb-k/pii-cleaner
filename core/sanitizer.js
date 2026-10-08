@@ -2,9 +2,10 @@
  * sanitizer.js
  *
  * Pure PII-sanitization logic for the PII Cleaner app.
- * No DOM access. Loadable from Node (module.exports) or a browser (window.PIISanitizer).
+ * No DOM access. Loadable from Node (module.exports), a browser (window.PIISanitizer),
+ * or any other JS host exposing globalThis (e.g. JavaScriptCore: globalThis.PIISanitizer).
  *
- * See SPEC.md for the authoritative design. This file implements:
+ * See docs/SPEC.md for the authoritative design. This file implements:
  *  - Pass 1: structured field recognition over parsed JSON (FIELD_MAP)
  *  - Pass 2: custom user-supplied lists (added to the shared dictionary)
  *  - Pass 3: ordered regex sweep over every string value / raw text
@@ -901,7 +902,8 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = PIISanitizer;
   }
-  if (typeof window !== 'undefined') {
-    window.PIISanitizer = PIISanitizer;
+  var g = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined') ? window : (typeof self !== 'undefined') ? self : this;
+  if (g) {
+    g.PIISanitizer = PIISanitizer;
   }
 })();
