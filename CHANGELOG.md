@@ -3,6 +3,14 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
+## [Unreleased]
+
+- Exempt subtrees: domains under `analysis_hour_destinations` (outgoing-traffic
+  destinations) are no longer stripped, whether in a `domain` key, nested
+  deeper, or in free text within that section. Other types still apply there,
+  and the leak check does not flag those domains. The table `EXEMPT_SUBTREES`
+  in the core is the place to add more sections.
+
 ## [0.9.2]
 
 - USER now also covers `identity`, `userDisplayName`, `user_display_name`,

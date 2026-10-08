@@ -122,6 +122,14 @@ PATH special-case: do not tokenize the whole path. Replace only the user segment
 `/home/jdoe/x` and `/Users/jdoe/x` likewise. If a learned HOST appears in a UNC path
 `\\HOST\share`, replace it. Keep file names and extensions.
 
+**Exempt subtrees.** A second table, `EXEMPT_SUBTREES`, maps a key (matched
+case-insensitively, any depth) to the types that are switched off for every value
+under it: pass 1, pass 3 and the leak check all honour it, and nothing is learned
+from those values for the switched-off types. Other types still apply inside the
+subtree, and values learned elsewhere are still replaced there. First entry:
+`analysis_hour_destinations` → `DOMAIN`, because the domains of outgoing-traffic
+destinations are the far end of the connection, not ours.
+
 ### Pass 2 — custom lists (user-supplied, one value per line, in UI textarea)
 Four textareas: Hostnames, Usernames, Domains, Other sensitive strings (→ CUSTOM).
 Values added to the dictionary before pass 3 so they are replaced everywhere, including free text.

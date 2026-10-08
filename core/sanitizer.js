@@ -29,6 +29,25 @@
   // an `OU=` component of a distinguished name, or a backslash-joined path made
   // entirely of already-learned OUs. The leak check applies the same rule.
   var CONTEXT_ONLY_TYPES = new Set(['OU']);
+
+  // Subtrees in which some types are left alone. Keyed by lower-cased key name;
+  // every value under that key (any depth) is processed with the listed types
+  // switched off, in pass 1, pass 3 and the leak check. Outgoing-traffic
+  // destinations are the first case: the domains there are the far end, not ours.
+  var EXEMPT_SUBTREES = {
+    analysis_hour_destinations: ['DOMAIN']
+  };
+
+  // `enabled` for the values under `key`: the same object unless the key opens an
+  // exempt subtree, in which case a copy with those types off.
+  function subtreeEnabled(enabled, key) {
+    if (key == null) return enabled;
+    var off = EXEMPT_SUBTREES[String(key).toLowerCase()];
+    if (!off) return enabled;
+    var copy = Object.assign({}, enabled);
+    for (var i = 0; i < off.length; i++) copy[off[i]] = false;
+    return copy;
+  }
   // `OU=<name>` inside a DN; the value runs to the next `,` / `;` / `+` or line end,
   // tolerating LDAP-escaped characters ("OU=Sales\, EMEA").
   var DN_OU_RE = /(?<![\p{L}\p{N}_])OU=((?:\\.|[^,;+\r\n])*?)(?=[ \t]*(?:[,;+]|$))/gimu;
@@ -398,6 +417,7 @@
   }
 
   function processValue(value, state, enabled, statsAcc, leafKey, containerKey) {
+    enabled = subtreeEnabled(enabled, leafKey);
     if (Array.isArray(value)) {
       return value.map(function (v) { return processValue(v, state, enabled, statsAcc, leafKey, containerKey); });
     }
@@ -437,7 +457,9 @@
     }
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
-      for (var k = 0; k < keys.length; k++) node[keys[k]] = sweepTree(node[keys[k]], state, enabled, statsAcc);
+      for (var k = 0; k < keys.length; k++) {
+        node[keys[k]] = sweepTree(node[keys[k]], state, subtreeEnabled(enabled, keys[k]), statsAcc);
+      }
       return node;
     }
     if (typeof node === 'string') return sweepString(node, state, enabled, statsAcc);
@@ -605,8 +627,10 @@
   // ---------------------------------------------------------------------
 
   // `texts` is an array of strings to scan: the string leaves of sanitized JSON (so
-  // JSON escaping such as `\\` never hides a match) or the raw-text output.
+  // JSON escaping such as `\\` never hides a match) or the raw-text output. A leaf
+  // from an exempt subtree comes as { text, enabled } carrying its own type set.
   function findLeaks(texts, state, enabled) {
+    var defaultEnabled = enabled;
     var leaks = [];
     var seen = new Set();
 
@@ -632,7 +656,9 @@
       leaks.push({ value: value, type: type, context: outputText.slice(start, end) });
     }
 
-    texts.forEach(function (outputText) {
+    texts.forEach(function (item) {
+      var outputText = (item && typeof item === 'object') ? item.text : item;
+      var enabled = (item && typeof item === 'object' && item.enabled) ? item.enabled : defaultEnabled;
       if (typeof outputText !== 'string' || !outputText) return;
 
       // host label glued to a domain token: "fileserver01.{{DOMAIN_1}}"
@@ -691,12 +717,14 @@
     return leaks;
   }
 
-  function collectStrings(node, out) {
-    if (typeof node === 'string') { out.push(node); return out; }
-    if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) collectStrings(node[i], out); return out; }
+  // String leaves for the leak check, each with the type set in force where it
+  // sits (see EXEMPT_SUBTREES).
+  function collectStrings(node, out, enabled) {
+    if (typeof node === 'string') { out.push({ text: node, enabled: enabled }); return out; }
+    if (Array.isArray(node)) { for (var i = 0; i < node.length; i++) collectStrings(node[i], out, enabled); return out; }
     if (node && typeof node === 'object') {
       var keys = Object.keys(node);
-      for (var k = 0; k < keys.length; k++) collectStrings(node[keys[k]], out);
+      for (var k = 0; k < keys.length; k++) collectStrings(node[keys[k]], out, subtreeEnabled(enabled, keys[k]));
     }
     return out;
   }
@@ -929,7 +957,7 @@
               else if (format === 'array') output = JSON.stringify(recs, null, 2);
               else output = recs.map(function (r) { return JSON.stringify(r); }).join('\n');
               records = recs.length;
-              leakTexts = collectStrings(recs, []);
+              leakTexts = collectStrings(recs, [], enabled);
             } catch (deep) {
               if (!(deep instanceof RangeError)) throw deep;
               // e.g. nesting too deep for recursion: still sanitize, as raw text.
@@ -985,7 +1013,8 @@
     detectFormat: detectFormat,
     analyzeInput: analyzeInput,
     TYPES: TYPES,
-    FIELD_MAP: FIELD_MAP
+    FIELD_MAP: FIELD_MAP,
+    EXEMPT_SUBTREES: EXEMPT_SUBTREES
   };
 
   if (typeof module !== 'undefined' && module.exports) {
