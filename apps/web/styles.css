@@ -73,6 +73,35 @@ html, body {
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--panel-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Top-right link to the project on GitHub. */
+.app-header-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.app-header-link:hover,
+.app-header-link:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.app-header-link-icon {
+  flex: none;
 }
 
 .app-header-title {

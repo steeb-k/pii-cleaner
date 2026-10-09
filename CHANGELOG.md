@@ -3,6 +3,21 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
+## [0.9.4]
+
+- Obfuscate checks GitHub for a newer release once at launch and whenever the
+  popover is opened, at most once an hour. At launch a found update is offered
+  in a dialog; in the popover it is an **Install Update** button. Installing
+  downloads the release zip, verifies it (an `Obfuscate.app` of the expected
+  version, signed by the same team), replaces the app in place and relaunches
+  it. The first install asks once for permission to write to the folder the
+  app is in (the sandbox needs that); later updates run without a prompt. The
+  app now holds the outbound `network.client` entitlement for this; it still
+  talks only to GitHub, and only to check and download. Logs never leave the
+  Mac.
+- Web app: a link to the project on GitHub in the top-right corner of the
+  header.
+
 ## [0.9.3]
 
 - Exempt subtrees: under `analysis_hour_destinations` (outgoing-traffic

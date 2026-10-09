@@ -43,7 +43,8 @@ jobs:
         env:
           OBFUSCATE_UNIVERSAL: '1'
 
-      # The built app must be sandboxed and must not hold any network entitlement.
+      # The built app must be sandboxed, with outbound network for the updater only
+      # (network.client; never network.server).
       - name: Check entitlements
         run: |
           codesign -d --entitlements - "dist/macos/Obfuscate.app" > ents.txt 2>&1
@@ -51,7 +52,8 @@ jobs:
           grep -q "com.apple.security.app-sandbox" ents.txt
           grep -q "com.apple.security.files.user-selected.read-write" ents.txt
           grep -q "com.apple.security.cs.allow-jit" ents.txt
-          # Exactly those three entitlements, nothing else. (`if` instead of a bare `! grep`,
+          grep -q "com.apple.security.network.client" ents.txt
+          # Exactly those four entitlements, nothing else. (`if` instead of a bare `! grep`,
           # which `bash -e` ignores unless it happens to be the last command.)
-          test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 3
-          if grep -qi "network" ents.txt; then echo "network entitlement found"; exit 1; fi
+          test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 4
+          if grep -q "network.server" ents.txt; then echo "inbound network entitlement found"; exit 1; fi

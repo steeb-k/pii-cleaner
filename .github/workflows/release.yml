@@ -121,7 +121,8 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -d --entitlements - "$app" > ents.txt 2>&1
           grep -q "com.apple.security.app-sandbox" ents.txt
-          if grep -qi "network" ents.txt; then echo "::error::network entitlement found"; cat ents.txt; exit 1; fi
+          grep -q "com.apple.security.network.client" ents.txt
+          if grep -q "network.server" ents.txt; then echo "::error::inbound network entitlement found"; cat ents.txt; exit 1; fi
           if [ "$SIGN_MACOS" = "true" ]; then
             codesign -dv --verbose=2 "$app" 2>&1 | grep -E "^(Authority=Developer ID Application|TeamIdentifier=)"
             # A stapled ticket is what lets Gatekeeper accept the bundle offline.

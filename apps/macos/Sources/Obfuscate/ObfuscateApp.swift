@@ -1,12 +1,21 @@
 import SwiftUI
 
+/// Launch hook: the update check runs once the app is up (see Updater).
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Updater.shared.checkAtLaunch()
+    }
+}
+
 @main
 struct ObfuscateApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
 
     var body: some Scene {
         MenuBarExtra {
-            ContentView(state: state)
+            ContentView(state: state, updater: Updater.shared)
         } label: {
             // MenuBarIcon.image is a template image, so it follows the menu bar's
             // light/dark appearance. A small warning badge is added when the last

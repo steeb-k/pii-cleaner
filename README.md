@@ -85,7 +85,8 @@ bash apps/macos/build-app.sh --open   # -> dist/macos/Obfuscate.app (menu-bar on
 
 Needs Xcode command-line tools (Swift 5.9+). See
 [`apps/macos/README.md`](apps/macos/README.md) for details (SwiftUI menu bar,
-JavaScriptCore bridge, App Sandbox with no network entitlement).
+JavaScriptCore bridge, App Sandbox; the only networking is the in-app updater's
+check of GitHub releases).
 
 ## Running the tests
 
@@ -134,27 +135,32 @@ notarizes and staples it, and publishes one GitHub release with the zip. A
 
 ## The no-network guarantee
 
-Every host app here makes zero network requests, by construction:
+No host app here ever sends a log anywhere, by construction:
 
 - `core/sanitizer.js` touches nothing but its own arguments &mdash; no
   `fetch`, `XMLHttpRequest`, `WebSocket`, storage, or URL literals.
 - The web app's `index.html` carries a strict CSP
   (`default-src 'none'; script-src 'self'; ...; connect-src 'none'`) that
   blocks any such attempt even if one slipped in, and `apps/web/serve.py`
-  binds to `127.0.0.1` only.
+  binds to `127.0.0.1` only. Its one outbound reference is the GitHub link
+  in the header, which only a click follows.
 - The CLI touches only the files you pass it (plus, with `--legend-out`,
   the one legend file you named) and stdin/stdout/stderr.
-- The macOS app ships with App Sandbox and no network entitlement at all, so
-  the OS itself blocks network access (see `apps/macos/README.md`); its tests
-  and CI check the entitlements.
+- The macOS app ships with App Sandbox. Its only networking is the updater
+  (`apps/macos/Sources/Obfuscate/Updater.swift`): two GETs to GitHub, at most
+  once an hour, to see whether a newer release exists and to download it when
+  you say so. Nothing is ever sent. Its tests pin networking to that one file
+  and its URLs to GitHub hosts, and CI checks the entitlements
+  (`network.client`, never `network.server`); see `apps/macos/README.md`.
 
 Verify it yourself at any time:
 
 ```sh
-grep -rn "https\?://" core apps --include=*.js --include=*.html
+grep -rn "https\?://" core apps --include=*.js --include=*.html --include=*.swift
 ```
 
-This should return nothing but comments.
+This should return nothing but comments, the web header's GitHub link, and the
+updater's GitHub URLs.
 
 ## Adding a new host app
 

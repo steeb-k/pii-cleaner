@@ -85,7 +85,9 @@ The app makes zero network requests, by construction:
   anywhere other than the page's own origin, even if a bug or a
   pasted log line somehow tried to trigger one.
 - There are no `<script src="https://...">`/CDN includes, no fonts,
-  no analytics, no service workers.
+  no analytics, no service workers. The GitHub link in the header is a plain
+  `<a href>` (`rel="noopener noreferrer"`, new tab): nothing is requested
+  unless you click it.
 - `core/sanitizer.js` and `app.js` contain no `fetch(`, `XMLHttpRequest`,
   `WebSocket`, or URL literals.
 - No `localStorage`, `sessionStorage`, `IndexedDB`, or cookies are
@@ -106,7 +108,8 @@ To verify this yourself:
    ```sh
    grep -rnE "https?://|fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB" core apps --include=*.js --include=*.html
    ```
-   This should return nothing (or only comments/the CSP meta line).
+   This should return nothing but comments, the CSP meta line, and the one
+   GitHub project link in the header.
 
 ## Token format
 

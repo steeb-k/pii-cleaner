@@ -3,12 +3,24 @@ import PIICore
 
 struct ContentView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var updater: Updater
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Obfuscate").font(.headline)
-                Text("Local only. Nothing leaves this Mac.").font(.caption).foregroundStyle(.secondary)
+                Text("Local only. Your logs never leave this Mac.").font(.caption).foregroundStyle(.secondary)
+            }
+
+            if let rel = updater.available {
+                HStack {
+                    Button("Install Update (\(rel.version))") { updater.install(rel) }
+                        .disabled(updater.isWorking)
+                    if updater.isWorking { ProgressView().controlSize(.small) }
+                }
+                if let message = updater.failureMessage {
+                    Text(message).font(.caption).foregroundStyle(.red)
+                }
             }
 
             if let e = state.initError {
@@ -100,6 +112,9 @@ struct ContentView: View {
         }
         .padding(12)
         .frame(width: 340)
-        .onAppear { state.refreshLegendCount() }
+        .onAppear {
+            state.refreshLegendCount()
+            updater.checkOnPopoverOpen()
+        }
     }
 }

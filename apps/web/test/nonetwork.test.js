@@ -17,6 +17,18 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 // are excluded: they legitimately talk to 127.0.0.1.
 const APP_FILES = ['core/sanitizer.js', 'apps/web/app.js', 'apps/web/index.html'];
 
+// The one outbound reference the page may carry: a plain link to the project, which only a
+// click follows (no fetch, no prefetch; CSP connect-src 'none' still applies). SPEC.md
+// names it in the acceptance grep.
+const PROJECT_URL = 'https://github.com/steeb-k/pii-cleaner';
+const PROJECT_LINK_RE = /<a class="app-header-link" href="https:\/\/github\.com\/steeb-k\/pii-cleaner" target="_blank" rel="noopener noreferrer"[^>]*>/;
+
+function withoutProjectLink(html) {
+  const m = PROJECT_LINK_RE.exec(html);
+  assert.ok(m, 'index.html must carry exactly the GitHub project link: <a class="app-header-link" href="' + PROJECT_URL + '" target="_blank" rel="noopener noreferrer" ...>');
+  return html.replace(PROJECT_LINK_RE, '<a class="app-header-link">');
+}
+
 function stripComments(src, file) {
   let s = src;
   if (file.endsWith('.html')) s = s.replace(/<!--[\s\S]*?-->/g, '');
@@ -44,8 +56,8 @@ describe('static: CSP and includes', () => {
     assert.equal(html.split('http-equiv="Content-Security-Policy"').length - 1, 1);
   });
 
-  test('no remote <script src> / <link href> / any remote src|href in index.html', () => {
-    const html = stripComments(read('apps/web/index.html'), 'index.html');
+  test('no remote <script src> / <link href> / any remote src|href in index.html (besides the project link)', () => {
+    const html = withoutProjectLink(stripComments(read('apps/web/index.html'), 'index.html'));
     assert.doesNotMatch(html, /<script[^>]+src\s*=\s*["']?\s*(https?:)?\/\//i);
     assert.doesNotMatch(html, /<link[^>]+href\s*=\s*["']?\s*(https?:)?\/\//i);
     assert.doesNotMatch(html, /\b(src|href|action|poster|data)\s*=\s*["']?\s*(https?:)?\/\//i);
@@ -64,6 +76,15 @@ describe('static: CSP and includes', () => {
     assert.doesNotMatch(html, /<img[^>]*src="(?!data:image\/png;base64,)/i, 'img sources must be inlined data: URIs');
     assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'no inline scripts (CSP script-src self would block them)');
     assert.doesNotMatch(html, /\son[a-z]+\s*=/i, 'no inline event handlers (blocked by CSP)');
+  });
+
+  test('the GitHub project link is the only outbound link, opens a new tab with noopener', () => {
+    const html = stripComments(read('apps/web/index.html'), 'index.html');
+    const hrefs = [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"/g)].map((m) => m[1]);
+    assert.deepEqual(hrefs, [PROJECT_URL]);
+    assert.equal((html.match(PROJECT_LINK_RE) || []).length, 1);
+    // no prefetch/preconnect hints that would fire a request without a click
+    assert.doesNotMatch(html, /rel="(dns-prefetch|preconnect|prefetch|prerender)/i);
   });
 
   test('styles.css has no remote url()/@import/fonts', () => {
@@ -85,8 +106,9 @@ describe('static: forbidden APIs outside comments', () => {
     test(f + ' contains no network/storage/dialog API usage', () => {
       let src = stripComments(read(f), f);
       if (f === 'apps/web/index.html') {
-        // the CSP line itself is allowed by the SPEC acceptance grep
+        // the CSP line and the GitHub project link are allowed by the SPEC acceptance grep
         src = src.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '');
+        src = withoutProjectLink(src);
       }
       for (const re of FORBIDDEN) {
         const m = re.exec(src);

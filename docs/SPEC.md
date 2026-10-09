@@ -193,7 +193,9 @@ UI shows the legend as a sortable table with a filter box.
   (no `confirm()`).
 
 ## UI layout (single page, no framework)
-Header: title + "100% local — no network" badge + a live indicator that CSP is active.
+Header: title + "100% local — no network" badge + a live indicator that CSP is active, and in
+the top-right corner one plain link to the project on GitHub (opens a new tab; a click is the
+only thing that follows it).
 Left column: Input (textarea + file picker + format auto-detect label), Options (category
 toggles, custom-list textareas, legend import), Sanitize button.
 Right column: tabs — Output | Legend | Leak check. Stats line: records processed, replacements by type.
@@ -209,4 +211,4 @@ Reverse mode (restoring tokens), timestamp shifting, private/public IP distincti
 - Same hostname in two files → same token.
 - Legend export → clear → import → re-sanitize yields identical tokens.
 - Opening DevTools Network tab shows only the 4 local files, nothing else, ever.
-- `grep -nE "https?://|fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB" *.js *.html` returns only comments or the CSP line.
+- `grep -nE "https?://|fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB" *.js *.html` returns only comments, the CSP line, or the one `<a class="app-header-link" href="https://github.com/steeb-k/pii-cleaner" ...>` project link.

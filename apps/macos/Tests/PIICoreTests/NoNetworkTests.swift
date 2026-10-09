@@ -1,28 +1,31 @@
 import XCTest
 @testable import PIICore
 
+/// The app's networking is confined to the updater, which talks only to GitHub.
+/// Everything else (the core bridge, the UI, file handling) stays network-free, and the
+/// entitlements grant exactly what that needs: sandbox, user-selected files, JIT, and
+/// outbound client connections for the updater. Never network.server.
 final class NoNetworkTests: XCTestCase {
-    func testEntitlementsHaveNoNetworkKeys() throws {
-        // Keys only: the file's comments may legitimately say "no network".
+    private func entitlements() throws -> [String: Any] {
         let data = try Data(contentsOf: TestPaths.macosDir.appendingPathComponent("Obfuscate.entitlements"))
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        for key in plist.keys {
-            XCTAssertFalse(key.lowercased().contains("network"), "network entitlement present: \(key)")
-        }
-        XCTAssertEqual(plist["com.apple.security.app-sandbox"] as? Bool, true)
-        XCTAssertEqual(plist["com.apple.security.files.user-selected.read-write"] as? Bool, true)
+        return try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     }
 
-    func testEntitlementsAreExactlySandboxUserSelectedFilesAndJIT() throws {
-        let data = try Data(contentsOf: TestPaths.macosDir.appendingPathComponent("Obfuscate.entitlements"))
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        // allow-jit is for JavaScriptCore under the hardened runtime; it is not a network grant.
+    func testEntitlementsAreExactlySandboxUserSelectedFilesJITAndNetworkClient() throws {
+        let plist = try entitlements()
         XCTAssertEqual(Set(plist.keys), ["com.apple.security.app-sandbox",
                                          "com.apple.security.files.user-selected.read-write",
-                                         "com.apple.security.cs.allow-jit"])
-        XCTAssertEqual(plist["com.apple.security.app-sandbox"] as? Bool, true)
-        XCTAssertEqual(plist["com.apple.security.files.user-selected.read-write"] as? Bool, true)
-        XCTAssertEqual(plist["com.apple.security.cs.allow-jit"] as? Bool, true)
+                                         "com.apple.security.cs.allow-jit",
+                                         "com.apple.security.network.client"])
+        for key in plist.keys { XCTAssertEqual(plist[key] as? Bool, true, key) }
+    }
+
+    func testNoInboundNetworkEntitlement() throws {
+        let plist = try entitlements()
+        XCTAssertNil(plist["com.apple.security.network.server"])
+        for key in plist.keys where key.lowercased().contains("network") {
+            XCTAssertEqual(key, "com.apple.security.network.client", "unexpected network entitlement: \(key)")
+        }
     }
 
     func testInfoPlistIsMenuBarOnly() throws {
@@ -30,19 +33,70 @@ final class NoNetworkTests: XCTestCase {
         let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         XCTAssertEqual(plist["LSUIElement"] as? Bool, true)
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "Obfuscate")
+        // Downloaded updates must not be quarantined by the app itself.
+        XCTAssertNil(plist["LSFileQuarantineEnabled"])
     }
 
-    func testSourcesDoNotUseNetworking() throws {
+    /// The one file allowed to use networking, relative to apps/macos/Sources.
+    private static let updaterFile = "Obfuscate/Updater.swift"
+    private static let banned = ["import Network", "URLSession", "NSURLConnection", "fetch(", "XMLHttpRequest", "WebSocket", "CFSocket", "NWConnection"]
+
+    private func swiftSources() throws -> [(relative: String, text: String)] {
         let src = TestPaths.macosDir.appendingPathComponent("Sources")
         let en = try XCTUnwrap(FileManager.default.enumerator(at: src, includingPropertiesForKeys: nil))
-        var checked = 0
-        let banned = ["import Network", "URLSession", "NSURLConnection", "fetch(", "XMLHttpRequest", "WebSocket"]
+        var out: [(relative: String, text: String)] = []
         for case let url as URL in en where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            for b in banned { XCTAssertFalse(text.contains(b), "\(url.lastPathComponent) contains \(b)") }
-            checked += 1
+            let rel = url.path.replacingOccurrences(of: src.path + "/", with: "")
+            out.append((relative: rel, text: try String(contentsOf: url, encoding: .utf8)))
         }
-        XCTAssertGreaterThan(checked, 5)
+        return out
+    }
+
+    func testNetworkingIsConfinedToTheUpdater() throws {
+        let sources = try swiftSources()
+        XCTAssertGreaterThan(sources.count, 6)
+        var sawUpdater = false
+        for (rel, text) in sources {
+            if rel == Self.updaterFile { sawUpdater = true; continue }
+            for b in Self.banned { XCTAssertFalse(text.contains(b), "\(rel) contains \(b)") }
+        }
+        XCTAssertTrue(sawUpdater, "\(Self.updaterFile) is missing")
+    }
+
+    /// Every URL literal in the sources is https and on an allowed GitHub host, and the
+    /// updater only ever downloads from those hosts (its host check names the allow-list).
+    func testURLLiteralsOnlyPointAtGitHub() throws {
+        let re = try NSRegularExpression(pattern: #"[a-z][a-z0-9+.-]*://[^\s"'<>)]+"#, options: [.caseInsensitive])
+        var found = 0
+        for (rel, text) in try swiftSources() {
+            for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                let literal = String(text[Range(m.range, in: text)!])
+                found += 1
+                let url = try XCTUnwrap(URL(string: literal), "\(rel): \(literal)")
+                XCTAssertEqual(url.scheme, "https", "\(rel): \(literal)")
+                let host = try XCTUnwrap(url.host, "\(rel): \(literal)")
+                XCTAssertTrue(UpdateCheck.allowedHosts.contains(host), "\(rel): \(literal) is not on an allowed host")
+            }
+        }
+        XCTAssertGreaterThan(found, 0)
+        let updater = try XCTUnwrap(try swiftSources().first { $0.relative == Self.updaterFile }).text
+        XCTAssertTrue(updater.contains("UpdateCheck.allowedHosts.contains(host)"), "the updater must check hosts against UpdateCheck.allowedHosts")
+        XCTAssertTrue(updater.contains("willPerformHTTPRedirection"), "the updater must vet redirects")
+    }
+
+    func testAllowedHostsAreGitHubOnly() {
+        for host in UpdateCheck.allowedHosts {
+            XCTAssertTrue(host == "github.com" || host.hasSuffix(".github.com") || host.hasSuffix(".githubusercontent.com"), host)
+        }
+        XCTAssertEqual(UpdateCheck.latestReleaseURL.host, "api.github.com")
+        XCTAssertEqual(UpdateCheck.projectPageURL.host, "github.com")
+    }
+
+    /// The core bridge library itself must stay Foundation + JavaScriptCore only.
+    func testPIICoreLibraryDoesNotUseNetworking() throws {
+        for (rel, text) in try swiftSources() where rel.hasPrefix("PIICore/") {
+            for b in Self.banned { XCTAssertFalse(text.contains(b), "\(rel) contains \(b)") }
+        }
     }
 
     func testResolvedCoreIsUnmodifiedRepoCore() throws {

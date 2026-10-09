@@ -26,8 +26,8 @@ macos    macos-15       swift test; scripts/ci/macos-keychain.sh (Developer ID i
                         keychain); apps/macos/build-app.sh with OBFUSCATE_UNIVERSAL=1,
                         CODESIGN_IDENTITY and OBFUSCATE_NOTARIZE=1 (signs, notarizes via
                         scripts/notarize-macos.sh, staples, zips); checks: lipo has x86_64,
-                        core byte-identical, codesign --verify --deep --strict, no network
-                        entitlement, stapler validate, spctl
+                        core byte-identical, codesign --verify --deep --strict, network.client
+                        but no network.server entitlement, stapler validate, spctl
 publish  ubuntu-24.04   version gate, the one asset, notes from CHANGELOG.md,
                         gh release create --verify-tag (prerelease for -testN)
 ```
@@ -55,13 +55,14 @@ The certificate is a *second* Developer ID Application certificate under the
 same team as the maintainer's own (which is Xcode's cloud-managed kind and
 cannot be exported), exactly as nullgate and seed-sync use.
 
-**Entitlements under the hardened runtime.** The sandbox entitlements are
-unchanged (App Sandbox, user-selected files, no network). One is added for
-release builds to work well: `com.apple.security.cs.allow-jit`, because
-JavaScriptCore's JIT needs it under the hardened runtime and otherwise falls
-back to its interpreter, which makes large logs far slower. It grants
-executable memory for the JIT and nothing else; `NoNetworkTests` and the CI
-checks assert the exact entitlement set and the absence of any network key.
+**Entitlements under the hardened runtime.** The sandbox entitlements are App
+Sandbox, user-selected files, `com.apple.security.network.client` (outbound
+only, for the in-app updater's two GETs to GitHub; see `apps/macos/README.md`)
+and `com.apple.security.cs.allow-jit`, because JavaScriptCore's JIT needs it
+under the hardened runtime and otherwise falls back to its interpreter, which
+makes large logs far slower. It grants executable memory for the JIT and
+nothing else. `NoNetworkTests` and the CI checks assert the exact entitlement
+set and the absence of `network.server`.
 
 ## Secrets and setup (one-time)
 
@@ -95,6 +96,12 @@ as a required reviewer there if a release should wait for approval.
 3. Tag `v<ver>-test1` (matching `CFBundleShortVersionString`): a prerelease with
    the zip appears.
 4. Tag `v<ver>`: the real release, marked latest.
+
+The in-app updater (`apps/macos/Sources/Obfuscate/Updater.swift`) reads
+GitHub's `releases/latest`, which only ever returns a non-draft, non-prerelease
+release, and downloads `Obfuscate-<ver>-macos-universal.zip` from it. So a
+`-testN` prerelease is never offered to users, and a real tag is picked up by
+every installed copy within an hour of its next launch or popover open.
 
 ## Local use
 
