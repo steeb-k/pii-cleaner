@@ -3,26 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Obfuscate</string>
+	<string>Obfuscate Updater</string>
 	<key>CFBundleExecutable</key>
-	<string>Obfuscate</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>ObfuscateUpdater</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.obfuscate.app</string>
+	<string>com.obfuscate.app.updater</string>
 	<key>CFBundleName</key>
-	<string>Obfuscate</string>
+	<string>ObfuscateUpdater</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.4</string>
+	<string>0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
-	<true/>
-	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>
 </plist>

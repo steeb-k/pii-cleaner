@@ -151,7 +151,10 @@ No host app here ever sends a log anywhere, by construction:
   once an hour, to see whether a newer release exists and to download it when
   you say so. Nothing is ever sent. Its tests pin networking to that one file
   and its URLs to GitHub hosts, and CI checks the entitlements
-  (`network.client`, never `network.server`); see `apps/macos/README.md`.
+  (`network.client`, never `network.server`). The install itself is done by
+  a small helper nested in the bundle that runs outside the sandbox (a
+  sandboxed process cannot produce a launchable app); it has no entitlements
+  and no networking code. See `apps/macos/README.md`.
 
 Verify it yourself at any time:
 

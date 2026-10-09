@@ -57,3 +57,16 @@ jobs:
           # which `bash -e` ignores unless it happens to be the last command.)
           test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 4
           if grep -q "network.server" ents.txt; then echo "inbound network entitlement found"; exit 1; fi
+
+      # The nested updater helper is signed, universal, and NOT sandboxed (it clears the
+      # sandbox's quarantine from the downloaded bundle, which no sandboxed process can).
+      - name: Check the updater helper
+        run: |
+          helper="dist/macos/Obfuscate.app/Contents/Helpers/ObfuscateUpdater.app"
+          test -d "$helper"
+          codesign --verify --strict --verbose=2 "$helper"
+          lipo -archs "$helper/Contents/MacOS/ObfuscateUpdater" | grep -q x86_64
+          codesign -d --entitlements - "$helper" > helper-ents.txt 2>&1
+          cat helper-ents.txt
+          if grep -q "com.apple.security" helper-ents.txt; then echo "the helper must carry no entitlements"; exit 1; fi
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$helper/Contents/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' dist/macos/Obfuscate.app/Contents/Info.plist)"

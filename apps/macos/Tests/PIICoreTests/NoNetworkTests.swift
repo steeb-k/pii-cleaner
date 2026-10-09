@@ -1,5 +1,6 @@
 import XCTest
 @testable import PIICore
+import UpdateInstall
 
 /// The app's networking is confined to the updater, which talks only to GitHub.
 /// Everything else (the core bridge, the UI, file handling) stays network-free, and the
@@ -26,6 +27,28 @@ final class NoNetworkTests: XCTestCase {
         for key in plist.keys where key.lowercased().contains("network") {
             XCTAssertEqual(key, "com.apple.security.network.client", "unexpected network entitlement: \(key)")
         }
+    }
+
+    /// The updater helper runs outside the sandbox on purpose (it clears the quarantine the
+    /// sandbox puts on the downloaded bundle, which a sandboxed process cannot), with no
+    /// entitlements at all, and it is a background-only app bundle.
+    func testUpdaterHelperHasNoEntitlementsAndIsBackgroundOnly() throws {
+        let data = try Data(contentsOf: TestPaths.macosDir.appendingPathComponent("ObfuscateUpdater.entitlements"))
+        let ents = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        XCTAssertTrue(ents.isEmpty, "the helper must carry no entitlements: \(ents.keys)")
+
+        let plistData = try Data(contentsOf: TestPaths.macosDir.appendingPathComponent("ObfuscateUpdater.plist"))
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any])
+        XCTAssertEqual(plist["LSUIElement"] as? Bool, true)
+        XCTAssertEqual(plist["CFBundleExecutable"] as? String, "ObfuscateUpdater")
+        XCTAssertEqual(plist["CFBundleIdentifier"] as? String, UpdateInstall.helperBundleIdentifier)
+        XCTAssertNil(plist["LSFileQuarantineEnabled"])
+
+        // build-app.sh nests it where the app looks for it and signs it without the sandbox.
+        let build = try String(contentsOf: TestPaths.macosDir.appendingPathComponent("build-app.sh"), encoding: .utf8)
+        XCTAssertTrue(build.contains(UpdateInstall.helperRelativePath.replacingOccurrences(of: "Contents/", with: "Contents/")))
+        XCTAssertTrue(build.contains("Contents/Helpers/ObfuscateUpdater.app"))
+        XCTAssertTrue(build.contains("--entitlements \"$PKG/ObfuscateUpdater.entitlements\" \"$HELPER\""))
     }
 
     func testInfoPlistIsMenuBarOnly() throws {
@@ -55,12 +78,16 @@ final class NoNetworkTests: XCTestCase {
     func testNetworkingIsConfinedToTheUpdater() throws {
         let sources = try swiftSources()
         XCTAssertGreaterThan(sources.count, 6)
-        var sawUpdater = false
+        var sawUpdater = false, sawHelper = false, sawInstall = false
         for (rel, text) in sources {
             if rel == Self.updaterFile { sawUpdater = true; continue }
+            if rel.hasPrefix("ObfuscateUpdater/") { sawHelper = true }
+            if rel.hasPrefix("UpdateInstall/") { sawInstall = true }
             for b in Self.banned { XCTAssertFalse(text.contains(b), "\(rel) contains \(b)") }
         }
         XCTAssertTrue(sawUpdater, "\(Self.updaterFile) is missing")
+        // The unsandboxed helper and the install library in particular never touch the network.
+        XCTAssertTrue(sawHelper && sawInstall)
     }
 
     /// Every URL literal in the sources is https and on an allowed GitHub host, and the

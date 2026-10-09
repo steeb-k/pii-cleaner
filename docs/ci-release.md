@@ -9,7 +9,7 @@ three.
 
 | Asset | Notes |
 |---|---|
-| `Obfuscate-<ver>-macos-universal.zip` | `Obfuscate.app` zipped with `ditto`; arm64 + x86_64; Developer ID signed with hardened runtime and secure timestamp; notarized; ticket stapled to the `.app` so Gatekeeper accepts it offline |
+| `Obfuscate-<ver>-macos-universal.zip` | `Obfuscate.app` zipped with `ditto`; arm64 + x86_64; Developer ID signed with hardened runtime and secure timestamp; notarized; ticket stapled to the `.app` so Gatekeeper accepts it offline. Nested inside: `Contents/Helpers/ObfuscateUpdater.app`, the unsandboxed install helper, signed the same way with no entitlements |
 
 The release is created in **one call with the asset attached**, never as a
 draft. A `v<ver>-test<N>` tag publishes a **prerelease**. The `publish` job
@@ -27,7 +27,8 @@ macos    macos-15       swift test; scripts/ci/macos-keychain.sh (Developer ID i
                         CODESIGN_IDENTITY and OBFUSCATE_NOTARIZE=1 (signs, notarizes via
                         scripts/notarize-macos.sh, staples, zips); checks: lipo has x86_64,
                         core byte-identical, codesign --verify --deep --strict, network.client
-                        but no network.server entitlement, stapler validate, spctl
+                        but no network.server entitlement, the nested helper signed, universal
+                        and entitlement-free, stapler validate, spctl
 publish  ubuntu-24.04   version gate, the one asset, notes from CHANGELOG.md,
                         gh release create --verify-tag (prerelease for -testN)
 ```
@@ -62,7 +63,11 @@ and `com.apple.security.cs.allow-jit`, because JavaScriptCore's JIT needs it
 under the hardened runtime and otherwise falls back to its interpreter, which
 makes large logs far slower. It grants executable memory for the JIT and
 nothing else. `NoNetworkTests` and the CI checks assert the exact entitlement
-set and the absence of `network.server`.
+set and the absence of `network.server`. The updater helper
+(`Contents/Helpers/ObfuscateUpdater.app`) is signed first, inside out, with
+the same identity and hardened runtime but **no** entitlements: it must run
+outside the sandbox to clear the sandbox's quarantine from the downloaded
+bundle. CI checks that it carries none.
 
 ## Secrets and setup (one-time)
 

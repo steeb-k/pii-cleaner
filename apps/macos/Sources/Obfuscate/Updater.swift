@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
-import Security
 import PIICore
+import UpdateInstall
 
 /// Checks GitHub for a newer release and installs it in place.
 ///
@@ -14,10 +14,11 @@ import PIICore
 /// opened (an "Install Update" button appears), at most once an hour across launches.
 ///
 /// Install: download the zip, unpack it with `ditto`, check that it is an Obfuscate bundle
-/// of the expected version signed by the same team as the running app, swap it into the
-/// folder the app lives in, relaunch and quit. The app is sandboxed, so writing to that
-/// folder (normally /Applications) needs the user to allow it once in a folder panel; a
-/// security-scoped bookmark remembers the grant for later updates.
+/// of the expected version signed by the same team as the running app, then hand it to the
+/// ObfuscateUpdater helper nested in this bundle and quit. The helper is launched through
+/// LaunchServices, so it runs outside the sandbox: it clears the quarantine the sandbox put
+/// on the unpacked files (a bundle carrying it cannot launch), swaps it into the folder the
+/// app lives in and relaunches Obfuscate. See Sources/UpdateInstall and Sources/ObfuscateUpdater.
 @MainActor
 final class Updater: ObservableObject {
     static let shared = Updater()
@@ -37,11 +38,15 @@ final class Updater: ObservableObject {
     private enum Keys {
         static let lastCheck = "updater.lastCheck"
         static let cachedRelease = "updater.cachedRelease"
-        static let folderBookmark = "updater.folderBookmark"
     }
 
     private let defaults = UserDefaults.standard
     private var progressPanel: NSPanel?
+
+    private init() {
+        // 0.9.4 and 0.9.5 kept a security-scoped bookmark for the app's folder; the helper needs none.
+        defaults.removeObject(forKey: "updater.folderBookmark")
+    }
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -126,9 +131,13 @@ final class Updater: ObservableObject {
         if appURL.path.contains("/AppTranslocation/") {
             fail("Move Obfuscate to your Applications folder first, then update."); return
         }
+        let helperURL = appURL.appendingPathComponent(UpdateInstall.helperRelativePath)
+        guard FileManager.default.fileExists(atPath: helperURL.path) else {
+            fail("This copy of Obfuscate has no updater helper (\(UpdateInstall.helperRelativePath)). Download the update from the release page instead."); return
+        }
         phase = .downloading
         showProgressPanel()
-        let teamID = UpdateInstaller.ownTeamIdentifier()
+        let teamID = UpdateInstall.ownTeamIdentifier()
         let expectedBundleID = Bundle.main.bundleIdentifier ?? "com.obfuscate.app"
         let userAgent = self.userAgent
         Task { [weak self] in
@@ -139,21 +148,25 @@ final class Updater: ObservableObject {
                 }.value
                 let stagingRoot = staged.deletingLastPathComponent().deletingLastPathComponent()
                 self.phase = .installing
-                guard let folder = try self.folderAccess(for: appURL) else {
-                    // Declined in the folder panel: nothing was changed, and the button stays for later.
-                    try? FileManager.default.removeItem(at: stagingRoot)
-                    self.phase = .idle
-                    self.hideProgressPanel()
-                    return
-                }
-                defer { folder.stopAccessingSecurityScopedResource() }
-                try UpdateInstaller.swap(staged: staged, into: appURL)
-                try? FileManager.default.removeItem(at: stagingRoot)
-                self.relaunch(appURL, version: rel.version)
+                let args = HelperArguments(staged: staged, target: appURL, stagingRoot: stagingRoot,
+                                           parentPID: ProcessInfo.processInfo.processIdentifier, version: rel.version)
+                try await self.launchHelper(at: helperURL, arguments: args)
+                // The helper waits for this process to go before it touches anything.
+                NSApp.terminate(nil)
             } catch {
                 self.fail("Could not install \(rel.version): \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Starts the nested helper through LaunchServices (so it gets its own, unsandboxed
+    /// process) with the staged bundle on its command line.
+    private func launchHelper(at helperURL: URL, arguments: HelperArguments) async throws {
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.arguments = arguments.commandLine
+        cfg.createsNewApplicationInstance = true
+        cfg.activates = false
+        _ = try await NSWorkspace.shared.openApplication(at: helperURL, configuration: cfg)
     }
 
     private func fail(_ message: String) {
@@ -173,56 +186,7 @@ final class Updater: ObservableObject {
         }
     }
 
-    // MARK: The folder the app lives in
-
-    /// Write access to the app's folder: the remembered grant if it still fits, otherwise a
-    /// folder panel pointed at that folder (one click on Allow). nil = the user declined.
-    /// The returned URL has security-scoped access started; the caller stops it.
-    private func folderAccess(for appURL: URL) throws -> URL? {
-        let parent = appURL.deletingLastPathComponent()
-        if let data = defaults.data(forKey: Keys.folderBookmark) {
-            var stale = false
-            if let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale),
-               !stale, UpdateInstaller.sameFolder(url, parent), url.startAccessingSecurityScopedResource() {
-                return url
-            }
-            defaults.removeObject(forKey: Keys.folderBookmark)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        let p = NSOpenPanel()
-        p.message = "Obfuscate needs permission to replace itself in \"\(parent.lastPathComponent)\". Click Allow to continue the update."
-        p.prompt = "Allow"
-        p.directoryURL = parent
-        p.canChooseFiles = false
-        p.canChooseDirectories = true
-        p.canCreateDirectories = false
-        p.allowsMultipleSelection = false
-        guard p.runModal() == .OK, let picked = p.url else { return nil }
-        guard UpdateInstaller.sameFolder(picked, parent) else {
-            throw UpdaterError.wrongFolder("that is \"\(picked.lastPathComponent)\"; Obfuscate needs the folder it is in, \"\(parent.lastPathComponent)\"")
-        }
-        guard picked.startAccessingSecurityScopedResource() else { return nil }
-        if let bm = try? picked.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
-            defaults.set(bm, forKey: Keys.folderBookmark)
-        }
-        return picked
-    }
-
-    private func relaunch(_ appURL: URL, version: String) {
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.createsNewApplicationInstance = true
-        cfg.activates = false
-        NSWorkspace.shared.openApplication(at: appURL, configuration: cfg) { _, error in
-            Task { @MainActor in
-                if let error = error {
-                    self.fail("Obfuscate \(version) is installed, but it could not be relaunched: \(error.localizedDescription). Open it again from \(appURL.deletingLastPathComponent().lastPathComponent).")
-                }
-                NSApp.terminate(nil)
-            }
-        }
-    }
-
-    // MARK: Progress panel (the popover closes under the folder panel, so progress lives in its own window)
+    // MARK: Progress panel (the popover closes when focus moves, so progress lives in its own window)
 
     private func showProgressPanel() {
         if progressPanel == nil {
@@ -262,8 +226,8 @@ enum UpdateInstaller {
             guard apps.count == 1, let app = apps.first else {
                 throw UpdaterError.badArchive("expected one .app in the zip, found \(apps.count)")
             }
-            try checkBundle(app, version: rel.version, bundleID: bundleID)
-            try verifySignature(of: app, teamID: teamID)
+            try UpdateInstall.checkBundle(app, version: rel.version, bundleID: bundleID)
+            try UpdateInstall.verifySignature(of: app, teamID: teamID)
             return app
         } catch {
             try? fm.removeItem(at: dir)
@@ -342,80 +306,6 @@ enum UpdateInstaller {
             throw UpdaterError.toolFailed("\(URL(fileURLWithPath: tool).lastPathComponent) exited with \(p.terminationStatus)")
         }
     }
-
-    static func checkBundle(_ app: URL, version: String, bundleID: String) throws {
-        let plistURL = app.appendingPathComponent("Contents/Info.plist")
-        guard let data = try? Data(contentsOf: plistURL),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            throw UpdaterError.badArchive("the downloaded app has no readable Info.plist")
-        }
-        let id = plist["CFBundleIdentifier"] as? String ?? ""
-        guard id == bundleID else { throw UpdaterError.badArchive("bundle identifier is \(id), expected \(bundleID)") }
-        let v = plist["CFBundleShortVersionString"] as? String ?? ""
-        guard v == version else { throw UpdaterError.badArchive("the downloaded app is version \(v), expected \(version)") }
-    }
-
-    /// The downloaded bundle must carry a valid signature; with a Developer ID build running,
-    /// one from the same team (an ad-hoc dev build only checks integrity).
-    static func verifySignature(of app: URL, teamID: String?) throws {
-        var staticCode: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(app as CFURL, [], &staticCode) == errSecSuccess, let code = staticCode else {
-            throw UpdaterError.signature("could not read the code signature")
-        }
-        var requirement: SecRequirement?
-        if let team = teamID {
-            let text = "anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
-            guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess else {
-                throw UpdaterError.signature("could not build the signing requirement")
-            }
-        }
-        let flags = SecCSFlags(rawValue: UInt32(kSecCSCheckAllArchitectures))
-        let status = SecStaticCodeCheckValidity(code, flags, requirement)
-        guard status == errSecSuccess else {
-            var why = "OSStatus \(status)"
-            if let msg = SecCopyErrorMessageString(status, nil) { why = msg as String }
-            throw UpdaterError.signature(teamID == nil ? "the download is not validly signed (\(why))"
-                                                       : "the download is not signed by the same team as this app (\(why))")
-        }
-    }
-
-    static func ownTeamIdentifier() -> String? {
-        var selfCode: SecCode?
-        guard SecCodeCopySelf([], &selfCode) == errSecSuccess, let c = selfCode else { return nil }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(c, [], &staticCode) == errSecSuccess, let sc = staticCode else { return nil }
-        var info: CFDictionary?
-        let flags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
-        guard SecCodeCopySigningInformation(sc, flags, &info) == errSecSuccess,
-              let dict = info as? [String: Any] else { return nil }
-        let team = dict[kSecCodeInfoTeamIdentifier as String] as? String
-        return (team?.isEmpty ?? true) ? nil : team
-    }
-
-    static func sameFolder(_ a: URL, _ b: URL) -> Bool {
-        a.standardizedFileURL.resolvingSymlinksInPath().path == b.standardizedFileURL.resolvingSymlinksInPath().path
-    }
-
-    /// Puts the staged bundle where the running one is. The running app keeps working from
-    /// its open files; the retired copy is removed, or left hidden if that fails.
-    static func swap(staged: URL, into appURL: URL) throws {
-        let fm = FileManager.default
-        let parent = appURL.deletingLastPathComponent()
-        let name = appURL.lastPathComponent
-        let token = String(UUID().uuidString.prefix(8))
-        let incoming = parent.appendingPathComponent(".\(name).update-\(token)")
-        let retired = parent.appendingPathComponent(".\(name).old-\(token)")
-        try fm.moveItem(at: staged, to: incoming)
-        do { try fm.moveItem(at: appURL, to: retired) }
-        catch { try? fm.removeItem(at: incoming); throw error }
-        do { try fm.moveItem(at: incoming, to: appURL) }
-        catch {
-            try? fm.moveItem(at: retired, to: appURL)
-            try? fm.removeItem(at: incoming)
-            throw error
-        }
-        try? fm.removeItem(at: retired)
-    }
 }
 
 enum UpdaterError: LocalizedError {
@@ -423,13 +313,11 @@ enum UpdaterError: LocalizedError {
     case badResponse(String)
     case badArchive(String)
     case toolFailed(String)
-    case signature(String)
-    case wrongFolder(String)
 
     var errorDescription: String? {
         switch self {
         case .refusedHost(let h): return "refusing to talk to \(h)"
-        case .badResponse(let m), .badArchive(let m), .toolFailed(let m), .signature(let m), .wrongFolder(let m): return m
+        case .badResponse(let m), .badArchive(let m), .toolFailed(let m): return m
         }
     }
 }
