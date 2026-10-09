@@ -3,6 +3,10 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
+## [0.9.5]
+
+- No functional change: a release cut to exercise the in-app updater from 0.9.4.
+
 ## [0.9.4]
 
 - Obfuscate checks GitHub for a newer release once at launch and whenever the
