@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// Launch hook: the update check runs once the app is up (see Updater).
+/// Launch hook: the update check runs once the app is up (see Updater). Launched with
+/// `--install-update` (`open Obfuscate.app --args --install-update`), the app instead checks
+/// right away and installs whatever newer release it finds, with no dialog: the way to
+/// exercise the whole update path from a terminal.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Updater.shared.checkAtLaunch()
+        if CommandLine.arguments.contains("--install-update") {
+            Updater.shared.installLatestNow()
+        } else {
+            Updater.shared.checkAtLaunch()
+        }
     }
 }
 

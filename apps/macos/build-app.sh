@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Builds "Obfuscate.app" into dist/macos/ (sandboxed, with the unsandboxed
-# ObfuscateUpdater helper nested under Contents/Helpers/) and zips it.
+# Builds "Obfuscate.app" into dist/macos/ and zips it.
 #
 #   bash apps/macos/build-app.sh [--open]
 #
@@ -51,7 +50,6 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PKG/I
 swift build -c "$CONFIGURATION" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --package-path "$PKG" 1>&2
 BINDIR="$(swift build -c "$CONFIGURATION" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --package-path "$PKG" --show-bin-path)"
 BIN="$BINDIR/Obfuscate"
-HELPER_BIN="$BINDIR/ObfuscateUpdater"
 
 APP="$OUT/Obfuscate.app"
 rm -rf "$APP"
@@ -65,26 +63,10 @@ cp "$PKG"/Sources/Obfuscate/Resources/ObfuscateTemplate*.png "$APP/Contents/Reso
 # App icon: built from the committed PNG iconset so the PNGs stay the source of truth.
 iconutil -c icns "$PKG/Icons/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 
-# The updater helper: its own app bundle under Contents/Helpers/, launched by the app
-# through LaunchServices so it runs OUTSIDE the sandbox (it clears the sandbox's quarantine
-# from the downloaded bundle and swaps it into Applications). Same version as the app.
-HELPER="$APP/Contents/Helpers/ObfuscateUpdater.app"
-mkdir -p "$HELPER/Contents/MacOS"
-cp "$HELPER_BIN" "$HELPER/Contents/MacOS/ObfuscateUpdater"
-cp "$PKG/ObfuscateUpdater.plist" "$HELPER/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$HELPER/Contents/Info.plist"
-
-# Seal inside out: the helper first (no entitlements, see ObfuscateUpdater.entitlements),
-# then the app, whose seal covers the nested bundle.
-# shellcheck disable=SC2086
-codesign --force --sign "$IDENTITY" $SIGN_FLAGS --entitlements "$PKG/ObfuscateUpdater.entitlements" "$HELPER" 1>&2
+# Seal the bundle (the one Mach-O is the executable itself).
 # shellcheck disable=SC2086
 codesign --force --sign "$IDENTITY" $SIGN_FLAGS --entitlements "$PKG/Obfuscate.entitlements" "$APP" 1>&2
 codesign --verify --deep --strict "$APP" || { echo "build-app: the sealed bundle does not verify" >&2; exit 1; }
-codesign --verify --strict "$HELPER" || { echo "build-app: the sealed helper does not verify" >&2; exit 1; }
-if codesign -d --entitlements - "$HELPER" 2>&1 | grep -q "app-sandbox"; then
-  echo "build-app: the helper must not be sandboxed" >&2; exit 1
-fi
 if [ "$IDENTITY" != "-" ]; then
   echo "build-app: TeamIdentifier -> $(codesign -dv --verbose=2 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')" >&2
 fi
@@ -92,7 +74,7 @@ if [ "${OBFUSCATE_NOTARIZE:-0}" = 1 ]; then
   "$ROOT/scripts/notarize-macos.sh" "$APP" 1>&2
 fi
 
-echo "build-app: Obfuscate arches -> $(lipo -archs "$APP/Contents/MacOS/Obfuscate"), helper -> $(lipo -archs "$HELPER/Contents/MacOS/ObfuscateUpdater")" >&2
+echo "build-app: Obfuscate arches -> $(lipo -archs "$APP/Contents/MacOS/Obfuscate")" >&2
 
 # Zip with ditto so the signature, extended attributes and (stapled) ticket survive.
 ZIP="$OUT/Obfuscate-$VERSION-macos-$SLICE.zip"

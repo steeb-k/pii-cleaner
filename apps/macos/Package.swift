@@ -7,15 +7,13 @@ let package = Package(
     products: [
         .library(name: "PIICore", targets: ["PIICore"]),
         .executable(name: "Obfuscate", targets: ["Obfuscate"]),
-        .executable(name: "ObfuscateUpdater", targets: ["ObfuscateUpdater"]),
     ],
     targets: [
         .target(name: "PIICore"),
-        // The install half of the updater (signature checks, quarantine, the swap), shared by
-        // the app and the unsandboxed helper that does the part the sandbox forbids.
+        // The install half of the updater (bundle and signature checks, quarantine, the swap):
+        // Foundation + Security, no networking, unit-tested on throwaway bundles.
         .target(name: "UpdateInstall"),
         .executableTarget(name: "Obfuscate", dependencies: ["PIICore", "UpdateInstall"], resources: [.process("Resources")]),
-        .executableTarget(name: "ObfuscateUpdater", dependencies: ["UpdateInstall"]),
         .testTarget(name: "PIICoreTests", dependencies: ["PIICore", "UpdateInstall"]),
     ],
     swiftLanguageVersions: [.v5]

@@ -43,30 +43,16 @@ jobs:
         env:
           OBFUSCATE_UNIVERSAL: '1'
 
-      # The built app must be sandboxed, with outbound network for the updater only
-      # (network.client; never network.server).
+      # The built app carries exactly one entitlement (JavaScriptCore's JIT under the
+      # hardened runtime) and no network entitlement of any kind. It is not sandboxed: the
+      # updater replaces the bundle in place. No-network is pinned by NoNetworkTests.
       - name: Check entitlements
         run: |
           codesign -d --entitlements - "dist/macos/Obfuscate.app" > ents.txt 2>&1
           cat ents.txt
-          grep -q "com.apple.security.app-sandbox" ents.txt
-          grep -q "com.apple.security.files.user-selected.read-write" ents.txt
           grep -q "com.apple.security.cs.allow-jit" ents.txt
-          grep -q "com.apple.security.network.client" ents.txt
-          # Exactly those four entitlements, nothing else. (`if` instead of a bare `! grep`,
-          # which `bash -e` ignores unless it happens to be the last command.)
-          test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 4
-          if grep -q "network.server" ents.txt; then echo "inbound network entitlement found"; exit 1; fi
-
-      # The nested updater helper is signed, universal, and NOT sandboxed (it clears the
-      # sandbox's quarantine from the downloaded bundle, which no sandboxed process can).
-      - name: Check the updater helper
-        run: |
-          helper="dist/macos/Obfuscate.app/Contents/Helpers/ObfuscateUpdater.app"
-          test -d "$helper"
-          codesign --verify --strict --verbose=2 "$helper"
-          lipo -archs "$helper/Contents/MacOS/ObfuscateUpdater" | grep -q x86_64
-          codesign -d --entitlements - "$helper" > helper-ents.txt 2>&1
-          cat helper-ents.txt
-          if grep -q "com.apple.security" helper-ents.txt; then echo "the helper must carry no entitlements"; exit 1; fi
-          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$helper/Contents/Info.plist")" = "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' dist/macos/Obfuscate.app/Contents/Info.plist)"
+          # Exactly that one entitlement. (`if` instead of a bare `! grep`, which `bash -e`
+          # ignores unless it happens to be the last command.)
+          test "$(grep -o 'com\.apple\.[A-Za-z0-9.-]*' ents.txt | sort -u | wc -l | tr -d ' ')" = 1
+          if grep -q "network" ents.txt; then echo "network entitlement found"; exit 1; fi
+          if grep -q "app-sandbox" ents.txt; then echo "the app must not be sandboxed (the updater replaces it in place)"; exit 1; fi

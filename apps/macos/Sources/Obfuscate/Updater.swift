@@ -12,13 +12,12 @@ import UpdateInstall
 ///
 /// Schedule: once at launch (a dialog offers the update) and whenever the popover is
 /// opened (an "Install Update" button appears), at most once an hour across launches.
+/// `--install-update` on the command line checks right away and installs without asking.
 ///
 /// Install: download the zip, unpack it with `ditto`, check that it is an Obfuscate bundle
-/// of the expected version signed by the same team as the running app, then hand it to the
-/// ObfuscateUpdater helper nested in this bundle and quit. The helper is launched through
-/// LaunchServices, so it runs outside the sandbox: it clears the quarantine the sandbox put
-/// on the unpacked files (a bundle carrying it cannot launch), swaps it into the folder the
-/// app lives in and relaunches Obfuscate. See Sources/UpdateInstall and Sources/ObfuscateUpdater.
+/// of the expected version signed by the same team as the running app, swap it into the
+/// folder the app lives in (normally /Applications, writable by an admin user), relaunch
+/// and quit. The checks and the swap are `UpdateInstall`.
 @MainActor
 final class Updater: ObservableObject {
     static let shared = Updater()
@@ -44,7 +43,7 @@ final class Updater: ObservableObject {
     private var progressPanel: NSPanel?
 
     private init() {
-        // 0.9.4 and 0.9.5 kept a security-scoped bookmark for the app's folder; the helper needs none.
+        // An earlier 0.9.4 kept a security-scoped bookmark for the app's folder; nothing needs it now.
         defaults.removeObject(forKey: "updater.folderBookmark")
     }
 
@@ -72,6 +71,29 @@ final class Updater: ObservableObject {
 
     /// When the popover opens: check (if due); the view shows the Install Update button.
     func checkOnPopoverOpen() { check(offerInDialog: false) }
+
+    /// `--install-update`: check now, ignoring the hourly limit, and install without asking.
+    /// A failure is reported in the usual dialog; "already up to date" only goes to the log.
+    func installLatestNow() {
+        guard isWorking == false else { return }
+        phase = .checking
+        let userAgent = self.userAgent
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let rel = try await UpdateInstaller.fetchLatest(userAgent: userAgent)
+                self.phase = .idle
+                guard UpdateCheck.isNewer(rel.version, than: self.currentVersion) else {
+                    NSLog("Obfuscate --install-update: \(rel.version) is not newer than \(self.currentVersion)")
+                    return
+                }
+                self.available = rel
+                self.install(rel)
+            } catch {
+                self.fail("Could not check for an update: \(error.localizedDescription)")
+            }
+        }
+    }
 
     private func check(offerInDialog: Bool) {
         guard isWorking == false else { return }
@@ -131,10 +153,6 @@ final class Updater: ObservableObject {
         if appURL.path.contains("/AppTranslocation/") {
             fail("Move Obfuscate to your Applications folder first, then update."); return
         }
-        let helperURL = appURL.appendingPathComponent(UpdateInstall.helperRelativePath)
-        guard FileManager.default.fileExists(atPath: helperURL.path) else {
-            fail("This copy of Obfuscate has no updater helper (\(UpdateInstall.helperRelativePath)). Download the update from the release page instead."); return
-        }
         phase = .downloading
         showProgressPanel()
         let teamID = UpdateInstall.ownTeamIdentifier()
@@ -148,25 +166,29 @@ final class Updater: ObservableObject {
                 }.value
                 let stagingRoot = staged.deletingLastPathComponent().deletingLastPathComponent()
                 self.phase = .installing
-                let args = HelperArguments(staged: staged, target: appURL, stagingRoot: stagingRoot,
-                                           parentPID: ProcessInfo.processInfo.processIdentifier, version: rel.version)
-                try await self.launchHelper(at: helperURL, arguments: args)
-                // The helper waits for this process to go before it touches anything.
-                NSApp.terminate(nil)
+                try UpdateInstall.stripQuarantine(staged)
+                try UpdateInstall.swap(staged: staged, into: appURL)
+                try? FileManager.default.removeItem(at: stagingRoot)
+                self.relaunch(appURL, version: rel.version)
             } catch {
                 self.fail("Could not install \(rel.version): \(error.localizedDescription)")
             }
         }
     }
 
-    /// Starts the nested helper through LaunchServices (so it gets its own, unsandboxed
-    /// process) with the staged bundle on its command line.
-    private func launchHelper(at helperURL: URL, arguments: HelperArguments) async throws {
+    /// Starts the freshly installed copy; this one quits once that has been attempted.
+    private func relaunch(_ appURL: URL, version: String) {
         let cfg = NSWorkspace.OpenConfiguration()
-        cfg.arguments = arguments.commandLine
         cfg.createsNewApplicationInstance = true
         cfg.activates = false
-        _ = try await NSWorkspace.shared.openApplication(at: helperURL, configuration: cfg)
+        NSWorkspace.shared.openApplication(at: appURL, configuration: cfg) { _, error in
+            Task { @MainActor in
+                if let error = error {
+                    self.fail("Obfuscate \(version) is installed, but it could not be relaunched: \(error.localizedDescription). Open it again from \(appURL.deletingLastPathComponent().lastPathComponent).")
+                }
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func fail(_ message: String) {

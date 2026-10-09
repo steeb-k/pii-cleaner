@@ -1,8 +1,7 @@
 import XCTest
 import UpdateInstall
 
-/// The install half of the updater: what the app hands the helper, and what the helper does
-/// with it, exercised on throwaway bundles under a temporary directory.
+/// The install half of the updater, exercised on throwaway bundles under a temporary directory.
 final class UpdateInstallTests: XCTestCase {
     private var tmp: URL!
 
@@ -24,42 +23,6 @@ final class UpdateInstallTests: XCTestCase {
         try data.write(to: app.appendingPathComponent("Contents/Info.plist"))
         try "#!/bin/sh\necho \(version)\n".write(to: app.appendingPathComponent("Contents/MacOS/X"), atomically: true, encoding: .utf8)
         return app
-    }
-
-    // MARK: Arguments
-
-    func testArgumentsRoundTrip() throws {
-        let args = HelperArguments(staged: URL(fileURLWithPath: "/tmp/stage/unpacked/Obfuscate.app"),
-                                   target: URL(fileURLWithPath: "/Applications/Obfuscate.app"),
-                                   stagingRoot: URL(fileURLWithPath: "/tmp/stage"), parentPID: 4242, version: "0.9.6")
-        XCTAssertEqual(try HelperArguments.parse(args.commandLine), args)
-    }
-
-    func testArgumentsAreStrict() throws {
-        let good = HelperArguments(staged: URL(fileURLWithPath: "/tmp/stage/unpacked/Obfuscate.app"),
-                                   target: URL(fileURLWithPath: "/Applications/Obfuscate.app"),
-                                   stagingRoot: URL(fileURLWithPath: "/tmp/stage"), parentPID: 1, version: "0.9.6").commandLine
-        func dropping(_ flag: String) -> [String] {
-            var out: [String] = []
-            var i = 0
-            while i < good.count { if good[i] == flag { i += 2 } else { out.append(good[i]); i += 1 } }
-            return out
-        }
-        for flag in ["--staged", "--target", "--staging-root", "--parent-pid", "--version"] {
-            XCTAssertThrowsError(try HelperArguments.parse(dropping(flag)), flag)
-        }
-        func replacing(_ flag: String, with value: String) -> [String] {
-            var out = good
-            out[out.firstIndex(of: flag)! + 1] = value
-            return out
-        }
-        XCTAssertThrowsError(try HelperArguments.parse(replacing("--staged", with: "relative/Obfuscate.app")))
-        XCTAssertThrowsError(try HelperArguments.parse(replacing("--target", with: "/Applications/Obfuscate")))
-        XCTAssertThrowsError(try HelperArguments.parse(replacing("--staged", with: "/elsewhere/Obfuscate.app")), "staged must be under the staging root")
-        XCTAssertThrowsError(try HelperArguments.parse(replacing("--parent-pid", with: "0")))
-        XCTAssertThrowsError(try HelperArguments.parse(replacing("--parent-pid", with: "abc")))
-        XCTAssertThrowsError(try HelperArguments.parse(good + ["--extra"]))
-        XCTAssertThrowsError(try HelperArguments.parse(["Obfuscate.app"]))
     }
 
     // MARK: Bundle checks
@@ -84,7 +47,7 @@ final class UpdateInstallTests: XCTestCase {
 
     func testStripQuarantineClearsEveryFileAndDirectory() throws {
         let app = try makeApp("A.app", in: tmp, version: "0.9.6")
-        // What the sandbox stamps on files a sandboxed app writes (flags with the sandbox bit set).
+        // A quarantine mark of the kind a download gets.
         let mark = "0286;00000000;Obfuscate;"
         var marked: [URL] = [app]
         for case let url as URL in try XCTUnwrap(FileManager.default.enumerator(at: app, includingPropertiesForKeys: nil)) { marked.append(url) }
@@ -132,16 +95,5 @@ final class UpdateInstallTests: XCTestCase {
     func testSameFolderSeesThroughSymlinksAndTrailingSlashes() {
         XCTAssertTrue(UpdateInstall.sameFolder(URL(fileURLWithPath: "/tmp/"), URL(fileURLWithPath: "/private/tmp")))
         XCTAssertFalse(UpdateInstall.sameFolder(URL(fileURLWithPath: "/tmp"), URL(fileURLWithPath: "/var")))
-    }
-
-    func testWaitForExitReturnsOnceTheProcessIsGone() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 0.3"]
-        XCTAssertNoThrow(try p.run())
-        let started = Date()
-        UpdateInstall.waitForExit(of: p.processIdentifier, timeout: 5)
-        XCTAssertFalse(p.isRunning)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
     }
 }

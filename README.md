@@ -51,7 +51,7 @@ pipeline order, field maps, token rules, non-goals).
 | `core/` | Shared sanitizer (`sanitizer.js`), its own unit tests, its API README |
 | `apps/web/` | Browser UI: `index.html`, `app.js`, `styles.css`, `serve.py`, tests |
 | `apps/cli/` | `pii-clean.js` Node CLI, tests |
-| `apps/macos/` | Obfuscate: SwiftUI + JavaScriptCore menu-bar app (SwiftPM package, sandboxed, tests, `build-app.sh`) |
+| `apps/macos/` | Obfuscate: SwiftUI + JavaScriptCore menu-bar app (SwiftPM package, tests, `build-app.sh`) |
 | `samples/` | Synthetic CrowdStrike/Rapid7 fixtures, fictional values only |
 | `docs/SPEC.md` | Design spec: detection pipeline, field maps, token/case rules |
 | `scripts/build-web.sh` | Builds `dist/web/`, a flat deployable copy of the web app |
@@ -85,7 +85,7 @@ bash apps/macos/build-app.sh --open   # -> dist/macos/Obfuscate.app (menu-bar on
 
 Needs Xcode command-line tools (Swift 5.9+). See
 [`apps/macos/README.md`](apps/macos/README.md) for details (SwiftUI menu bar,
-JavaScriptCore bridge, App Sandbox; the only networking is the in-app updater's
+JavaScriptCore bridge, not sandboxed; the only networking is the in-app updater's
 check of GitHub releases).
 
 ## Running the tests
@@ -146,15 +146,14 @@ No host app here ever sends a log anywhere, by construction:
   in the header, which only a click follows.
 - The CLI touches only the files you pass it (plus, with `--legend-out`,
   the one legend file you named) and stdin/stdout/stderr.
-- The macOS app ships with App Sandbox. Its only networking is the updater
+- The macOS app's only networking is the updater
   (`apps/macos/Sources/Obfuscate/Updater.swift`): two GETs to GitHub, at most
   once an hour, to see whether a newer release exists and to download it when
   you say so. Nothing is ever sent. Its tests pin networking to that one file
-  and its URLs to GitHub hosts, and CI checks the entitlements
-  (`network.client`, never `network.server`). The install itself is done by
-  a small helper nested in the bundle that runs outside the sandbox (a
-  sandboxed process cannot produce a launchable app); it has no entitlements
-  and no networking code. See `apps/macos/README.md`.
+  and its URLs to GitHub hosts, and CI checks that the built app carries no
+  network entitlement of any kind. The app is not sandboxed (the updater
+  replaces the bundle in Applications, which the sandbox forbids), so the
+  guarantee is the code and those tests. See `apps/macos/README.md`.
 
 Verify it yourself at any time:
 

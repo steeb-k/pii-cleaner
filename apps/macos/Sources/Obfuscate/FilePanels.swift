@@ -2,8 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum FilePanels {
-    /// ~/Library/Application Support/Obfuscate/ (created on demand). Inside the sandbox this
-    /// resolves to the app container's Application Support directory.
+    /// ~/Library/Application Support/Obfuscate/ (created on demand).
     static func legendDirectory() -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let dir = base.appendingPathComponent("Obfuscate", isDirectory: true)

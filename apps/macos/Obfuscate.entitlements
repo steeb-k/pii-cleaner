@@ -2,19 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- App Sandbox. Logs never leave the Mac: the only networking is the updater's two GETs to
-         GitHub (Sources/Obfuscate/Updater.swift), which is why network.client is here.
-         There is no network.server. -->
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <!-- Only what the user picks in an open/save panel (legend files, sanitized output). -->
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-    <!-- JavaScriptCore's JIT under the hardened runtime (Developer ID builds). Without
-         this JSC silently falls back to its interpreter and large logs take far longer.
-         It grants nothing beyond executable memory for the JIT. -->
+    <!-- Not sandboxed (since 0.9.4): the in-app updater replaces the bundle in Applications,
+         and a sandboxed process cannot produce a launchable app. The no-network guarantee is
+         kept by the code and its tests instead: networking lives in Updater.swift only, talks
+         to GitHub only, and nothing is ever sent (NoNetworkTests). No network entitlement is
+         needed or present; there is no network.server.
+         The one entitlement is JavaScriptCore's JIT under the hardened runtime (Developer ID
+         builds). Without it JSC silently falls back to its interpreter and large logs take far
+         longer. It grants nothing beyond executable memory for the JIT. -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
 </dict>

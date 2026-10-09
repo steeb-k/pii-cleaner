@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<!-- ObfuscateUpdater runs with NO entitlements, and in particular without the App Sandbox:
-     its whole job is to clear the quarantine the sandbox puts on the downloaded bundle and
-     move that bundle into Applications, neither of which a sandboxed process may do. It has
-     no network entitlement and no networking code (NoNetworkTests). -->
-<dict/>
-</plist>

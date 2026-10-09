@@ -1,20 +1,11 @@
 import Foundation
 import Security
 
-/// The install half of the updater, shared by the app (which downloads, unpacks and checks
-/// a release inside its sandbox) and by the ObfuscateUpdater helper (which runs outside the
-/// sandbox to strip the quarantine, swap the bundle in and relaunch). Foundation + Security,
-/// no networking, no UI.
-///
-/// Why a helper: the App Sandbox stamps every file a sandboxed process writes with a
-/// quarantine attribute carrying the sandbox flag, and macOS refuses to execute a binary that
-/// carries it. The app cannot remove that attribute from inside the sandbox, so the bundle it
-/// unpacks can never launch until an unsandboxed process clears it. Launching the helper
-/// through LaunchServices gives it its own, unsandboxed, process.
+/// The install half of the updater: the checks a downloaded bundle must pass, clearing any
+/// quarantine from it, and swapping it into place. Foundation + Security, no networking, no
+/// UI, so every rule is unit-testable (`UpdateInstallTests`). `Updater` in the app target
+/// does the downloading and drives this.
 public enum UpdateInstall {
-    /// Where build-app.sh nests the helper, relative to the app bundle.
-    public static let helperRelativePath = "Contents/Helpers/ObfuscateUpdater.app"
-    public static let helperBundleIdentifier = "com.obfuscate.app.updater"
     public static let quarantineAttribute = "com.apple.quarantine"
 
     public static func bundleIdentifier(of app: URL) -> String? {
@@ -74,8 +65,9 @@ public enum UpdateInstall {
         return (team?.isEmpty ?? true) ? nil : team
     }
 
-    /// Removes the quarantine attribute from `root` and everything under it. Only an
-    /// unsandboxed process can do this to files the sandbox marked.
+    /// Removes the quarantine attribute from `root` and everything under it. The app does not
+    /// quarantine what it downloads (no LSFileQuarantineEnabled), so this is a belt-and-braces
+    /// step: a bundle carrying the attribute would launch with a Gatekeeper prompt, or not at all.
     public static func stripQuarantine(_ root: URL) throws {
         var paths = [root.path]
         if let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: []) {
@@ -116,75 +108,16 @@ public enum UpdateInstall {
         }
         try? fm.removeItem(at: retired)
     }
-
-    /// Blocks until the process is gone, or the timeout passes.
-    public static func waitForExit(of pid: pid_t, timeout: TimeInterval) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while kill(pid, 0) == 0 && Date() < deadline { usleep(100_000) }
-    }
 }
 
 public enum UpdateInstallError: LocalizedError, Equatable {
     case badArchive(String)
     case signature(String)
-    case badArguments(String)
     case failed(String)
 
     public var errorDescription: String? {
         switch self {
-        case .badArchive(let m), .signature(let m), .badArguments(let m), .failed(let m): return m
+        case .badArchive(let m), .signature(let m), .failed(let m): return m
         }
-    }
-}
-
-/// What the app hands the helper on its command line, and how the helper reads it back.
-public struct HelperArguments: Equatable {
-    /// The verified, unpacked .app inside the staging directory.
-    public let staged: URL
-    /// The .app to replace: where the running app lives.
-    public let target: URL
-    /// The app's whole staging directory, removed once the install is done.
-    public let stagingRoot: URL
-    /// The app that launched the helper; it quits right away, and the helper waits for that.
-    public let parentPID: pid_t
-    /// The version the staged bundle must declare.
-    public let version: String
-
-    public init(staged: URL, target: URL, stagingRoot: URL, parentPID: pid_t, version: String) {
-        self.staged = staged; self.target = target; self.stagingRoot = stagingRoot
-        self.parentPID = parentPID; self.version = version
-    }
-
-    public var commandLine: [String] {
-        ["--staged", staged.path, "--target", target.path, "--staging-root", stagingRoot.path,
-         "--parent-pid", String(parentPID), "--version", version]
-    }
-
-    /// Parses the arguments after the executable name. Every flag is required, the paths
-    /// must be absolute, the bundles must be `.app`s and the staged one must sit under the
-    /// staging root: the helper runs unsandboxed and takes no liberties with its input.
-    public static func parse(_ args: [String]) throws -> HelperArguments {
-        var values: [String: String] = [:]
-        var i = 0
-        while i < args.count {
-            let flag = args[i]
-            guard flag.hasPrefix("--"), i + 1 < args.count else { throw UpdateInstallError.badArguments("unexpected argument \(flag)") }
-            values[String(flag.dropFirst(2))] = args[i + 1]
-            i += 2
-        }
-        func path(_ key: String, app: Bool) throws -> URL {
-            guard let v = values[key] else { throw UpdateInstallError.badArguments("missing --\(key)") }
-            guard v.hasPrefix("/") else { throw UpdateInstallError.badArguments("--\(key) must be an absolute path") }
-            let url = URL(fileURLWithPath: v).standardizedFileURL
-            if app, url.pathExtension != "app" { throw UpdateInstallError.badArguments("--\(key) must be an .app bundle") }
-            return url
-        }
-        let staged = try path("staged", app: true)
-        let target = try path("target", app: true)
-        let root = try path("staging-root", app: false)
-        guard staged.path.hasPrefix(root.path + "/") else { throw UpdateInstallError.badArguments("--staged must be inside --staging-root") }
-        guard let pidText = values["parent-pid"], let pid = pid_t(pidText), pid > 0 else { throw UpdateInstallError.badArguments("missing or bad --parent-pid") }
-        guard let version = values["version"], !version.isEmpty else { throw UpdateInstallError.badArguments("missing --version") }
-        return HelperArguments(staged: staged, target: target, stagingRoot: root, parentPID: pid, version: version)
     }
 }

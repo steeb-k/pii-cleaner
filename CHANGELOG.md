@@ -3,10 +3,6 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
-## [0.9.5]
-
-- No functional change: a release cut to exercise the in-app updater from 0.9.4.
-
 ## [0.9.4]
 
 - Obfuscate checks GitHub for a newer release once at launch and whenever the
@@ -14,17 +10,17 @@ notes (see `docs/ci-release.md`).
   in a dialog; in the popover it is an **Install Update** button. Installing
   downloads the release zip, verifies it (an `Obfuscate.app` of the expected
   version, signed by the same team), replaces the app in place and relaunches
-  it. The replacing is done by a small helper nested in the bundle
-  (`Contents/Helpers/ObfuscateUpdater.app`) that runs outside the sandbox: a
-  sandboxed process marks everything it writes with a quarantine that macOS
-  refuses to launch, and only an unsandboxed one can clear it. The helper has
-  no entitlements and no networking code, and repeats the bundle and signature
-  checks before it touches anything. No folder prompt is needed. The app now
-  holds the outbound `network.client` entitlement for this; it still talks
-  only to GitHub, and only to check and download. Logs never leave the Mac.
-  Downloads follow GitHub's redirect to its release CDN
+  it. It still talks only to GitHub, and only to check and download; logs never
+  leave the Mac. Downloads follow GitHub's redirect to its release CDN
   (`release-assets.githubusercontent.com`); a redirect anywhere else is
-  refused and reported by host.
+  refused and reported by host. `open Obfuscate.app --args --install-update`
+  runs the whole path from a terminal without asking.
+- The app is no longer sandboxed. A sandboxed process marks everything it
+  writes with a quarantine that macOS refuses to launch, so a sandboxed
+  updater cannot produce a working app, and the sandbox-safe detour through a
+  nested helper fell at LaunchServices. The entitlements are now the JIT and
+  nothing else, no network entitlement included; the no-network promise is
+  pinned by the tests (one networking file, GitHub hosts only) and by CI.
 - Web app: a link to the project on GitHub in the top-right corner of the
   header.
 
