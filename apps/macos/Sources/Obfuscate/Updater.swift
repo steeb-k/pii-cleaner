@@ -302,7 +302,13 @@ enum UpdateInstaller {
         let (tmp, response) = try await session.download(for: req, delegate: HostGuard.shared)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             try? FileManager.default.removeItem(at: tmp)
-            throw UpdaterError.badResponse("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0) downloading \(rel.assetURL.lastPathComponent)")
+            let http = response as? HTTPURLResponse
+            if let http, (300..<400).contains(http.statusCode),
+               let target = http.value(forHTTPHeaderField: "Location").flatMap(URL.init(string:)) {
+                // HostGuard declined the hop: GitHub is sending downloads somewhere new.
+                throw UpdaterError.refusedHost(target.host ?? target.absoluteString)
+            }
+            throw UpdaterError.badResponse("HTTP \(http?.statusCode ?? 0) downloading \(rel.assetURL.lastPathComponent)")
         }
         // The temporary file does not outlive this call; keep it under our own directory.
         let zip = dir.appendingPathComponent(UpdateCheck.assetName(for: rel.version))
@@ -310,7 +316,8 @@ enum UpdateInstaller {
         return zip
     }
 
-    /// Redirects (github.com asset links go to objects.githubusercontent.com) may only land on allowed hosts.
+    /// Redirects (github.com asset links go to a githubusercontent.com CDN host) may only land on
+    /// allowed hosts. A refused redirect is not followed, so the caller sees the 3xx response itself.
     final class HostGuard: NSObject, URLSessionTaskDelegate {
         static let shared = HostGuard()
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,

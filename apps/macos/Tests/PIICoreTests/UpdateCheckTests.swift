@@ -48,6 +48,14 @@ final class UpdateCheckTests: XCTestCase {
         XCTAssertTrue(UpdateCheck.allowedHosts.contains(try XCTUnwrap(r.assetURL.host)))
     }
 
+    /// github.com asset links redirect to GitHub's release CDN; the updater refuses redirects to
+    /// hosts off this list, which surfaced as "HTTP 302" when the CDN host changed.
+    func testAllowsTheReleaseAssetCDN() {
+        XCTAssertTrue(UpdateCheck.allowedHosts.contains("release-assets.githubusercontent.com"))
+        XCTAssertTrue(UpdateCheck.allowedHosts.contains("github.com"))
+        XCTAssertTrue(UpdateCheck.allowedHosts.contains("api.github.com"))
+    }
+
     func testReleaseRoundTripsThroughCodable() throws {
         let r = try UpdateCheck.parseLatest(releaseJSON(tag: "v0.9.5", assets: ["Obfuscate-0.9.5-macos-universal.zip"]))
         let again = try JSONDecoder().decode(UpdateRelease.self, from: try JSONEncoder().encode(r))

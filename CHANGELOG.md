@@ -3,10 +3,6 @@
 The `## [<version>]` section matching a release tag becomes that release's
 notes (see `docs/ci-release.md`).
 
-## [0.9.5]
-
-- No functional change: a release cut to exercise the in-app updater from 0.9.4.
-
 ## [0.9.4]
 
 - Obfuscate checks GitHub for a newer release once at launch and whenever the
@@ -18,7 +14,9 @@ notes (see `docs/ci-release.md`).
   app is in (the sandbox needs that); later updates run without a prompt. The
   app now holds the outbound `network.client` entitlement for this; it still
   talks only to GitHub, and only to check and download. Logs never leave the
-  Mac.
+  Mac. Downloads follow GitHub's redirect to its release CDN
+  (`release-assets.githubusercontent.com`); a redirect anywhere else is
+  refused and reported by host.
 - Web app: a link to the project on GitHub in the top-right corner of the
   header.
 

@@ -30,7 +30,12 @@ public enum UpdateCheck {
     /// GitHub's "latest release" endpoint: the newest non-draft, non-prerelease release.
     public static let latestReleaseURL = URL(string: "https://api.github.com/repos/steeb-k/pii-cleaner/releases/latest")!
     /// The hosts the updater is allowed to talk to. `NoNetworkTests` checks the sources against this.
-    public static let allowedHosts: Set<String> = ["api.github.com", "github.com", "objects.githubusercontent.com"]
+    /// Asset downloads from github.com redirect to a CDN host: release-assets.githubusercontent.com
+    /// today, objects.githubusercontent.com before that. A redirect to any other host is refused,
+    /// which the download reports as a 3xx status.
+    public static let allowedHosts: Set<String> = [
+        "api.github.com", "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com",
+    ]
     /// Checks are rate-limited to one per this interval, across launches.
     public static let minimumInterval: TimeInterval = 60 * 60
 
